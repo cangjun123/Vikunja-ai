@@ -92,12 +92,15 @@ function collectFilters() {
   const sortBy = $("sort-by").value;
   return { proj: proj ? Number(proj) : null, status, sortBy };
 }
-function applyFilters(tasks) {
+function applyFilters(tasks, opts = {}) {
+  const { ignoreStatus = false } = opts;
   const { proj, status } = collectFilters();
   return tasks.filter((t) => {
     if (proj && t.project_id !== proj) return false;
-    if (status === "open" && t.done) return false;
-    if (status === "done" && !t.done) return false;
+    if (!ignoreStatus) {
+      if (status === "open" && t.done) return false;
+      if (status === "done" && !t.done) return false;
+    }
     return true;
   });
 }
@@ -118,9 +121,9 @@ function sortTasks(tasks) {
   });
   return arr;
 }
-function filteredTasks() {
+function filteredTasks(opts = {}) {
   if (!dataset) return [];
-  return sortTasks(applyFilters(dataset.tasks));
+  return sortTasks(applyFilters(dataset.tasks, opts));
 }
 
 /* ============ 视图渲染:列表 ============ */
@@ -183,7 +186,9 @@ function isOverdue(t) {
 /* ============ 视图渲染:看板 ============ */
 function renderBoard() {
   const container = $("view-container");
-  const tasks = filteredTasks();
+  // 状态分组模式下,两列本身就是状态,再走状态筛选会把一列筛空 → 忽略它
+  const isStatusMode = boardGroupMode === "status";
+  const tasks = filteredTasks({ ignoreStatus: isStatusMode });
   let columns;
   if (boardGroupMode === "project") {
     const groups = new Map();
@@ -227,10 +232,13 @@ function renderBoard() {
     })
     .join("");
   const modeLabel = boardGroupMode === "project" ? "按项目分组" : "按状态分组";
+  const hint = isStatusMode
+    ? "💡 拖卡片切完成状态 · 点卡片编辑 · 此模式下忽略「状态」筛选"
+    : "💡 拖卡片换项目 · 点卡片编辑";
   container.innerHTML = `
     <div class="board-meta">
       <button id="board-toggle" class="btn btn-ghost btn-tiny">${modeLabel} · 点击切换</button>
-      <span class="board-hint">💡 拖动卡片切换状态/项目,点击卡片编辑</span>
+      <span class="board-hint">${hint}</span>
     </div>
     <div class="board-scroll">
       <div class="board">${colsHtml}</div>
@@ -735,9 +743,11 @@ async function saveModal() {
   const priority = Number($("m-priority").value);
   const labels = $("m-labels").value.split(",").map((s) => s.trim()).filter(Boolean);
   const description = $("m-desc").value;
+  // 先捕获 id,closeModal() 会把 editingTaskId 清成 null
+  const editingId = editingTaskId;
   closeModal();
-  if (editingTaskId) {
-    await patchTask(editingTaskId, {
+  if (editingId) {
+    await patchTask(editingId, {
       title,
       project_id: pid,
       due_date: due,
