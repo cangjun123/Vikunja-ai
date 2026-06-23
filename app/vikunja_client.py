@@ -73,6 +73,32 @@ class VikunjaClient:
         data = await self._request("GET", "/tasks", params=params)
         return data or []
 
+    async def get_tasks_slim(self, limit: int = 200) -> list[dict]:
+        """获取未完成任务,只保留前端 task_ref fuzzy match 必需的 6 个字段。
+
+        tasks_index 通过 SSE 下发给前端,用来本地解析 task_ref / 应用 query filter,
+        避免每个 query action 都 round-trip 调 Vikunja。
+        """
+        params = {
+            "sort": "-created",
+            "filter_by": "done",
+            "filter_value": "false",
+            "filter_comparator": "equals",
+            "per_page": str(limit),
+        }
+        data = await self._request("GET", "/tasks", params=params)
+        return [
+            {
+                "id": t.get("id"),
+                "title": t.get("title", ""),
+                "project_id": t.get("project_id"),
+                "due_date": (t.get("due_date") or "")[:10] or None,
+                "priority": t.get("priority", 1),
+                "done": bool(t.get("done", False)),
+            }
+            for t in (data or [])
+        ]
+
     async def get_all_tasks(self, per_page: int = 50) -> list[dict]:
         """分页拉取全部任务(含已完成),供看板/日历/树视图使用。
 
@@ -222,10 +248,6 @@ class VikunjaClient:
                 await self._request("DELETE", f"/tasks/{task_id}/labels/{lid}")
             except VikunjaError as e:
                 logger.warning("删除标签 %s 失败: %s", lid, e)
-
-    async def set_done(self, task_id: int, done: bool) -> dict:
-        """切换完成状态(对 update_task 的薄封装,语义更清楚)。"""
-        return await self.update_task(task_id, {"done": bool(done)})
 
     async def set_done(self, task_id: int, done: bool) -> dict:
         """切换完成状态(对 update_task 的薄封装,语义更清楚)。"""

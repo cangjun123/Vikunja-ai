@@ -32,7 +32,7 @@
   <main class="container">
     <!-- 输入区 -->
     <section class="card composer">
-      <textarea id="desc" class="composer-input" placeholder="描述你要新建的任务…&#10;例如:下周三前整理报销材料,放到杂活里" rows="3"></textarea>
+      <textarea id="desc" class="composer-input" placeholder="告诉我你想做什么…&#10;例如:下周五前交周报放到工作里 / 把写周报改到下周三 / 下周有多少截止?" rows="3"></textarea>
       <div class="composer-foot">
         <span class="kbd-hint">⌘ / Ctrl + Enter 提交</span>
         <button id="btn-suggest" class="btn btn-primary">
@@ -59,9 +59,9 @@
       <pre id="stream-output" class="stream-output"></pre>
     </section>
 
-    <!-- 建议结果 -->
-    <section id="draft-section" hidden>
-      <!-- AI 理由 -->
+    <!-- 动作计划 -->
+    <section id="actions-section" hidden>
+      <!-- AI 理由横幅 -->
       <div id="reason-card" class="card reason-card" hidden>
         <span class="reason-ico">💡</span>
         <div class="reason-body">
@@ -70,73 +70,15 @@
         </div>
       </div>
 
-      <!-- 任务预览卡 -->
-      <div class="card">
-        <div class="card-head">
-          <h2>任务预览</h2>
-          <span class="hint-edit">所有字段可直接编辑</span>
-        </div>
-
-        <div class="field">
-          <label for="f-title">标题</label>
-          <input type="text" id="f-title" class="input">
-        </div>
-
-        <div class="grid2">
-          <div class="field">
-            <label for="f-project">项目</label>
-            <select id="f-project" class="input"></select>
-          </div>
-          <div class="field">
-            <label for="f-due">截止日期</label>
-            <input type="date" id="f-due" class="input">
-          </div>
-        </div>
-
-        <div class="grid2">
-          <div class="field">
-            <label for="f-priority">优先级</label>
-            <select id="f-priority" class="input">
-              <option value="0">0 · 无</option>
-              <option value="1">1 · 低</option>
-              <option value="2">2 · 较低</option>
-              <option value="3">3 · 中</option>
-              <option value="4">4 · 较高</option>
-              <option value="5">5 · 紧急</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>标签</label>
-            <div class="tags-wrap input">
-              <div id="tags-display" class="tags"></div>
-              <input type="text" id="f-labels-input" class="tag-input" placeholder="输入后回车">
-            </div>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="f-desc">描述</label>
-          <textarea id="f-desc" class="input" rows="3"></textarea>
-        </div>
-
-        <div class="field">
-          <label>清单</label>
-          <div id="checklist-display" class="checklist"></div>
-          <input type="text" id="f-checklist-input" class="input checklist-input" placeholder="添加步骤后回车">
-        </div>
-      </div>
-
-      <!-- 参考上下文 -->
-      <div id="context-card" class="card context-card" hidden>
-        <div class="card-head"><h2>参考的已有待办</h2></div>
-        <div id="context-tasks" class="context-list"></div>
-      </div>
+      <!-- 动作卡片列表 -->
+      <div id="actions-list"></div>
 
       <!-- 操作栏 -->
-      <div class="actions">
-        <button id="btn-cancel" class="btn btn-ghost">取消</button>
-        <button id="btn-edit" class="btn btn-ghost">↺ 重新编辑</button>
-        <button id="btn-create" class="btn btn-primary btn-grow">确认创建</button>
+      <div class="actions actions-bar">
+        <button id="btn-cancel" class="btn btn-ghost">取消全部</button>
+        <button id="btn-execute" class="btn btn-primary btn-grow">
+          <span class="btn-ico">▶</span><span id="execute-label">全部执行</span>
+        </button>
       </div>
 
       <!-- 继续优化(多轮对话)-->
@@ -145,11 +87,11 @@
           <span class="refine-ico">↻</span>
           <div>
             <div class="refine-label">继续优化</div>
-            <div class="refine-hint">对当前建议提出修改意见,AI 会基于完整对话迭代</div>
+            <div class="refine-hint">对当前计划提出修改意见,AI 会基于完整对话迭代</div>
           </div>
         </div>
         <div class="refine-row">
-          <input type="text" id="refine-input" class="input refine-input" placeholder="例如:截止日期推迟一周 / 加一个“联系财务”的步骤 / 标签换成“报销”">
+          <input type="text" id="refine-input" class="input refine-input" placeholder="例如:第一个任务推迟一周 / 再加一个步骤">
           <button id="btn-refine" class="btn btn-secondary">
             <span class="btn-ico">↻</span><span>优化</span>
           </button>
@@ -157,6 +99,53 @@
       </div>
     </section>
   </main>
+
+  <!-- create action 字段模板(供 JS 克隆)-->
+  <template id="tpl-create-fields">
+    <div class="field">
+      <label>标题</label>
+      <input type="text" data-k="title" class="input">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>项目</label>
+        <select data-k="project_id" class="input"></select>
+      </div>
+      <div class="field">
+        <label>截止日期</label>
+        <input type="date" data-k="due_date" class="input">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>优先级</label>
+        <select data-k="priority" class="input">
+          <option value="0">0 · 无</option>
+          <option value="1">1 · 低</option>
+          <option value="2">2 · 较低</option>
+          <option value="3">3 · 中</option>
+          <option value="4">4 · 较高</option>
+          <option value="5">5 · 紧急</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>标签</label>
+        <div class="tags-wrap input">
+          <div class="tags" data-k="labels-display"></div>
+          <input type="text" data-k="labels-input" class="tag-input" placeholder="回车添加">
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label>描述</label>
+      <textarea data-k="description" class="input" rows="2"></textarea>
+    </div>
+    <div class="field">
+      <label>清单</label>
+      <div class="checklist" data-k="checklist-display"></div>
+      <input type="text" data-k="checklist-input" class="input checklist-input" placeholder="添加步骤后回车">
+    </div>
+  </template>
 
   <script src="/static/app.js"></script>
 </body>

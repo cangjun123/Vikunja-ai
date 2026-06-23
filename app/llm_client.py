@@ -8,7 +8,7 @@ from typing import AsyncGenerator
 
 import httpx
 
-from .schemas import TaskDraft
+from .schemas import ActionPlan, TaskDraft
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ def extract_json(content: str) -> dict:
 
 
 def coerce_draft(obj: dict) -> TaskDraft:
-    """把 LLM 返回的字典规整成 TaskDraft。"""
+    """把 LLM 返回的字典规整成 TaskDraft(create 子字段容错)。"""
     title = str(obj.get("title", "")).strip()
     if not title:
         raise LLMError("LLM 没有返回任务标题(title)")
@@ -147,5 +147,149 @@ def coerce_draft(obj: dict) -> TaskDraft:
 
 
 def parse_draft(content: str) -> TaskDraft:
-    """从完整文本解析出 TaskDraft。"""
+    """从完整文本解析出 TaskDraft(create 单任务场景仍用)。"""
     return coerce_draft(extract_json(content))
+
+
+# ---- Phase 4:多动作解析 ----
+
+
+def _coerce_int(v, default=None):
+    if v in (None, "", "null", "None"):
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_str_list(v) -> list[str]:
+    if not v:
+        return []
+    if isinstance(v, str):
+        v = [v]
+    return [str(x).strip() for x in v if str(x).strip()]
+
+
+def normalize_action(raw: dict) -> dict:
+    """把 LLM 输出的单条 action 字典做轻量容错,返回标准化的 dict。
+
+    discriminated union 在 parse_actions 里用 TypeAdapter 校验;
+    这里先做基础字段规整,减少 pydantic 拒绝的几率。
+    """
+    if not isinstance(raw, dict):
+        raise LLMError(f"动作必须是对象,收到 {type(raw).__name__}")
+    t = str(raw.get("type", "")).strip().lower()
+    out = dict(raw)
+    out["type"] = t
+
+    if t == "create":
+        if not str(out.get("title", "")).strip():
+            raise LLMError("create 动作缺少 title")
+        out["title"] = str(out["title"]).strip()[:200]
+        out["description"] = str(out.get("description", "") or "").strip()
+        out["project_id"] = _coerce_int(out.get("project_id"))
+        due = out.get("due_date")
+        out["due_date"] = None if due in ("", "null", "None") else (str(due).strip() or None if due else None)
+        out["priority"] = max(0, min(5, _coerce_int(out.get("priority"), 1) or 1))
+        out["labels"] = _coerce_str_list(out.get("labels"))
+        out["checklist"] = _coerce_str_list(out.get("checklist"))
+        out["repeat_after"] = max(0, _coerce_int(out.get("repeat_after"), 0) or 0)
+        out["repeat_mode"] = max(0, min(2, _coerce_int(out.get("repeat_mode"), 0) or 0))
+
+    elif t == "update":
+        ref = str(out.get("task_ref", "")).strip()
+        if not ref:
+            raise LLMError("update 动作缺少 task_ref")
+        out["task_ref"] = ref
+        hint = out.get("project_hint")
+        out["project_hint"] = str(hint).strip() if hint else None
+        fields = out.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            raise LLMError("update 动作 fields 必须是非空对象")
+        out["fields"] = fields
+
+    elif t == "complete":
+        ref = str(out.get("task_ref", "")).strip()
+        if not ref:
+            raise LLMError("complete 动作缺少 task_ref")
+        out["task_ref"] = ref
+        hint = out.get("project_hint")
+        out["project_hint"] = str(hint).strip() if hint else None
+
+    elif t == "query":
+        filt = out.get("filter")
+        out["filter"] = filt if isinstance(filt, dict) else {}
+        out["summary"] = str(out.get("summary", "") or "").strip()
+
+    elif t == "create_project":
+        if not str(out.get("title", "")).strip():
+            raise LLMError("create_project 动作缺少 title")
+        out["title"] = str(out["title"]).strip()
+        out["parent_project_id"] = _coerce_int(out.get("parent_project_id"))
+
+    elif t == "update_project":
+        ref = str(out.get("project_ref", "")).strip()
+        if not ref:
+            raise LLMError("update_project 动作缺少 project_ref")
+        out["project_ref"] = ref
+        fields = out.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            raise LLMError("update_project 动作 fields 必须是非空对象")
+        out["fields"] = fields
+
+    else:
+        raise LLMError(f"未知的动作类型: {t!r}")
+
+    return out
+
+
+def parse_actions(content: str) -> ActionPlan:
+    """把 LLM 完整输出解析成 ActionPlan。
+
+    兼容老格式:如果 JSON 里没有 `actions` 但有 `title`,wrap 成单条 create。
+    """
+    obj = extract_json(content)
+
+    # 老格式兼容:单任务 {draft}
+    if "actions" not in obj:
+        if "title" in obj:
+            draft = coerce_draft(obj)
+            return ActionPlan(
+                reason=draft.reason,
+                actions=[
+                    {
+                        "type": "create",
+                        "title": draft.title,
+                        "description": draft.description,
+                        "project_id": draft.project_id,
+                        "due_date": draft.due_date,
+                        "priority": draft.priority,
+                        "labels": list(draft.labels),
+                        "checklist": list(draft.checklist),
+                    }
+                ],
+            )
+        raise LLMError("LLM 输出缺少 actions 数组")
+
+    raw_actions = obj.get("actions") or []
+    if not isinstance(raw_actions, list):
+        raise LLMError("actions 必须是数组")
+
+    normalized: list[dict] = []
+    for i, raw in enumerate(raw_actions):
+        try:
+            normalized.append(normalize_action(raw))
+        except LLMError as e:
+            raise LLMError(f"第 {i + 1} 个动作无效:{e}") from e
+
+    # ActionPlan 构造时 pydantic 会按 discriminator="type" 校验每条 action
+    try:
+        plan = ActionPlan(
+            reason=str(obj.get("reason", "") or "").strip(),
+            summary=str(obj.get("summary", "") or "").strip(),
+            actions=normalized,  # type: ignore[arg-type]
+        )
+    except Exception as e:
+        raise LLMError(f"动作计划校验失败:{e}") from e
+    return plan

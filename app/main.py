@@ -18,9 +18,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import is_logged_in, require_api, verify_password
 from .config import settings
-from .llm_client import LLMClient, LLMError, parse_draft
+from .llm_client import LLMClient, LLMError, parse_actions
 from .prompt import SYSTEM_PROMPT, build_context
-from .schemas import CreateTaskRequest, SuggestRequest
+from .schemas import CreateTaskRequest, ExecuteActionsRequest, SuggestRequest
 from .vikunja_client import VikunjaClient, VikunjaError
 
 logging.basicConfig(
@@ -158,6 +158,8 @@ async def api_suggest(req: SuggestRequest, _: None = Depends(require_api)):
             projects = await vikunja.get_projects(include_archived=False)
             labels = await vikunja.get_labels()
             tasks = await vikunja.get_tasks(limit=settings.max_context_tasks)
+            # tasks_index 用于前端本地解析 task_ref + 应用 query filter
+            tasks_index = await vikunja.get_tasks_slim(limit=200)
         except VikunjaError as e:
             yield _sse("error", {"detail": str(e)})
             return
@@ -181,9 +183,9 @@ async def api_suggest(req: SuggestRequest, _: None = Depends(require_api)):
             yield _sse("error", {"detail": str(e)})
             return
 
-        # 3. 解析完整输出为结构化草稿
+        # 3. 解析完整输出为动作计划
         try:
-            draft = parse_draft("".join(collected))
+            plan = parse_actions("".join(collected))
         except LLMError as e:
             yield _sse("error", {"detail": str(e)})
             return
@@ -191,15 +193,22 @@ async def api_suggest(req: SuggestRequest, _: None = Depends(require_api)):
         yield _sse(
             "done",
             {
-                "draft": draft.model_dump(mode="json"),
+                "reason": plan.reason,
+                "summary": plan.summary,
+                "actions": [a.model_dump(mode="json") for a in plan.actions],
                 "projects": [
-                    {"id": p.get("id"), "title": p.get("title", "")} for p in projects
+                    {
+                        "id": p.get("id"),
+                        "title": p.get("title", ""),
+                        "identifier": p.get("identifier", "") or "",
+                        "hex_color": p.get("hex_color", "") or "",
+                    }
+                    for p in projects
                 ],
-                "labels": [l.get("title", "") for l in labels],
-                "recent_tasks": [
-                    {"title": t.get("title", ""), "project_id": t.get("project_id")}
-                    for t in tasks[:8]
+                "labels": [
+                    {"id": l.get("id"), "title": l.get("title", "")} for l in labels
                 ],
+                "tasks_index": tasks_index,
             },
         )
 
@@ -247,6 +256,94 @@ async def api_delete_task(task_id: int, _: None = Depends(require_api)):
     except VikunjaError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True}
+
+
+# ============ 批量动作执行(Phase 4)============
+
+
+@app.post("/api/execute-actions")
+async def api_execute_actions(
+    req: ExecuteActionsRequest, _: None = Depends(require_api)
+):
+    """批量执行动作列表,按 type 分发,返 per-action 结果。
+
+    前端已经解析完 task_ref/project_ref 成 task_id/project_id,这里只做执行。
+    每条动作独立 try/except,失败不影响其他动作;前端按 index 对齐结果。
+    """
+    results: list[dict] = []
+    for i, action in enumerate(req.actions):
+        t = action.get("type")
+        try:
+            if t == "create":
+                # 透传 create 子字段给 CreateTaskRequest
+                payload = {
+                    "title": str(action.get("title", "")).strip(),
+                    "description": str(action.get("description", "") or ""),
+                    "project_id": int(action.get("project_id") or 0),
+                    "due_date": action.get("due_date"),
+                    "priority": int(action.get("priority", 1)),
+                    "labels": list(action.get("labels") or []),
+                    "checklist": list(action.get("checklist") or []),
+                    "repeat_after": int(action.get("repeat_after", 0) or 0),
+                    "repeat_mode": int(action.get("repeat_mode", 0) or 0),
+                }
+                if not payload["title"]:
+                    raise ValueError("标题不能为空")
+                if not payload["project_id"]:
+                    raise ValueError("请选择项目")
+                req_obj = CreateTaskRequest(**payload)
+                created = await vikunja.create_task(req_obj)
+                results.append(
+                    {
+                        "index": i,
+                        "ok": True,
+                        "task_url": vikunja.task_url(created.get("id"))
+                        if created.get("id")
+                        else None,
+                    }
+                )
+            elif t == "update":
+                task_id = int(action.get("task_id") or 0)
+                if not task_id:
+                    raise ValueError("缺少 task_id(前端未匹配到任务)")
+                fields = action.get("fields") or {}
+                if not isinstance(fields, dict) or not fields:
+                    raise ValueError("fields 不能为空")
+                await vikunja.update_task(task_id, fields)
+                results.append({"index": i, "ok": True})
+            elif t == "complete":
+                task_id = int(action.get("task_id") or 0)
+                if not task_id:
+                    raise ValueError("缺少 task_id(前端未匹配到任务)")
+                await vikunja.set_done(task_id, True)
+                results.append({"index": i, "ok": True})
+            elif t == "create_project":
+                body = {
+                    k: v
+                    for k, v in action.items()
+                    if k != "type" and v is not None
+                }
+                if not body.get("title"):
+                    raise ValueError("项目名称不能为空")
+                await vikunja.create_project(body)
+                results.append({"index": i, "ok": True})
+            elif t == "update_project":
+                pid = int(action.get("project_id") or 0)
+                if not pid:
+                    raise ValueError("缺少 project_id(前端未匹配到项目)")
+                fields = action.get("fields") or {}
+                if not isinstance(fields, dict) or not fields:
+                    raise ValueError("fields 不能为空")
+                await vikunja.update_project(pid, fields)
+                results.append({"index": i, "ok": True})
+            elif t == "query":
+                # query 动作前端已经内联渲染,这里 no-op
+                results.append({"index": i, "ok": True})
+            else:
+                raise ValueError(f"未知的动作类型: {t!r}")
+        except (VikunjaError, ValueError, KeyError, TypeError) as e:
+            results.append({"index": i, "ok": False, "error": str(e)})
+    return {"ok": all(r["ok"] for r in results), "results": results}
 
 
 # ============ 项目管理 ============
