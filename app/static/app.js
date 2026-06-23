@@ -242,9 +242,16 @@ function resolveProjectRef(ref) {
  */
 function buildCreateFields(action) {
   const tpl = $("tpl-create-fields");
-  const root = tpl.content.cloneNode(true);
+  // 注意:DocumentFragment 被 appendChild 后子节点会被"领养"走,fragment 自己变空。
+  // 所以必须先把所有元素引用存下来,collet 时用引用而不是再 querySelector。
+  const frag = tpl.content.cloneNode(true);
 
-  const projSel = root.querySelector('[data-k="project_id"]');
+  const titleInp = frag.querySelector('[data-k="title"]');
+  const descInp = frag.querySelector('[data-k="description"]');
+  const dueInp = frag.querySelector('[data-k="due_date"]');
+  const prioSel = frag.querySelector('[data-k="priority"]');
+  const projSel = frag.querySelector('[data-k="project_id"]');
+
   projSel.innerHTML = '<option value="">(未选择)</option>';
   for (const p of projectsCache) {
     const opt = document.createElement("option");
@@ -254,17 +261,17 @@ function buildCreateFields(action) {
     projSel.appendChild(opt);
   }
 
-  root.querySelector('[data-k="title"]').value = action.title || "";
-  root.querySelector('[data-k="due_date"]').value = (action.due_date || "").slice(0, 10);
-  root.querySelector('[data-k="priority"]').value = String(action.priority ?? 1);
-  root.querySelector('[data-k="description"]').value = action.description || "";
+  titleInp.value = action.title || "";
+  dueInp.value = (action.due_date || "").slice(0, 10);
+  prioSel.value = String(action.priority ?? 1);
+  descInp.value = action.description || "";
 
   const labels = Array.isArray(action.labels) ? [...action.labels] : [];
   const checklist = Array.isArray(action.checklist) ? [...action.checklist] : [];
-  const labelsDisplay = root.querySelector('[data-k="labels-display"]');
-  const labelsInput = root.querySelector('[data-k="labels-input"]');
-  const checklistDisplay = root.querySelector('[data-k="checklist-display"]');
-  const checklistInput = root.querySelector('[data-k="checklist-input"]');
+  const labelsDisplay = frag.querySelector('[data-k="labels-display"]');
+  const labelsInput = frag.querySelector('[data-k="labels-input"]');
+  const checklistDisplay = frag.querySelector('[data-k="checklist-display"]');
+  const checklistInput = frag.querySelector('[data-k="checklist-input"]');
   renderTags(labelsDisplay, labels);
   setupTagInput(labelsInput, labels, labelsDisplay);
   renderChecklist(checklistDisplay, checklist);
@@ -274,17 +281,17 @@ function buildCreateFields(action) {
     const projId = parseInt(projSel.value, 10);
     return {
       type: "create",
-      title: root.querySelector('[data-k="title"]').value.trim(),
-      description: root.querySelector('[data-k="description"]').value.trim(),
+      title: titleInp.value.trim(),
+      description: descInp.value.trim(),
       project_id: isNaN(projId) ? null : projId,
-      due_date: root.querySelector('[data-k="due_date"]').value || null,
-      priority: parseInt(root.querySelector('[data-k="priority"]').value, 10) || 0,
+      due_date: dueInp.value || null,
+      priority: parseInt(prioSel.value, 10) || 0,
       labels: [...labels],
       checklist: [...checklist],
     };
   };
 
-  return { root, collect };
+  return { root: frag, collect };
 }
 
 /* ============ 单条动作卡片渲染 ============ */
