@@ -103,7 +103,8 @@ async def logout(request: Request):
 async def api_context(_: None = Depends(require_api)):
     """返回项目与标签列表,供前端渲染下拉框。"""
     try:
-        projects = await vikunja.get_projects()
+        # AI 建议页不展示归档项目(避免选错)
+        projects = await vikunja.get_projects(include_archived=False)
         labels = await vikunja.get_labels()
     except VikunjaError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -153,7 +154,8 @@ async def api_suggest(req: SuggestRequest, _: None = Depends(require_api)):
         # 1. 读取 Vikunja 上下文
         try:
             yield _sse("status", {"msg": "正在读取 Vikunja 上下文…"})
-            projects = await vikunja.get_projects()
+            # 给 LLM 的项目列表也排除归档项目
+            projects = await vikunja.get_projects(include_archived=False)
             labels = await vikunja.get_labels()
             tasks = await vikunja.get_tasks(limit=settings.max_context_tasks)
         except VikunjaError as e:
@@ -242,6 +244,42 @@ async def api_delete_task(task_id: int, _: None = Depends(require_api)):
     """删除任务。"""
     try:
         await vikunja.delete_task(task_id)
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
+
+
+# ============ 项目管理 ============
+
+@app.put("/api/projects")
+async def api_create_project(fields: dict, _: None = Depends(require_api)):
+    """创建项目(支持 parent_project_id 建子项目)。body 字段透传。"""
+    if not isinstance(fields, dict) or not fields:
+        raise HTTPException(status_code=400, detail="请求体必须是字段字典")
+    try:
+        created = await vikunja.create_project(fields)
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "project": created}
+
+
+@app.post("/api/projects/{pid}")
+async def api_update_project(pid: int, fields: dict, _: None = Depends(require_api)):
+    """更新项目字段。body 字段透传。"""
+    if not isinstance(fields, dict) or not fields:
+        raise HTTPException(status_code=400, detail="请求体必须是字段字典")
+    try:
+        updated = await vikunja.update_project(pid, fields)
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "project": updated}
+
+
+@app.delete("/api/projects/{pid}")
+async def api_delete_project(pid: int, _: None = Depends(require_api)):
+    """删除项目。Vikunja 对非空项目的处理(级联/拒绝)实施时实测。"""
+    try:
+        await vikunja.delete_project(pid)
     except VikunjaError as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True}

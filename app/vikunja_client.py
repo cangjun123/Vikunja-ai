@@ -40,9 +40,22 @@ class VikunjaClient:
         return resp.json()
 
     # ---- 读取上下文 ----
-    async def get_projects(self) -> list[dict]:
-        data = await self._request("GET", "/projects")
+    async def get_projects(self, include_archived: bool = True) -> list[dict]:
+        # Vikunja 默认只返非归档项目,要拿到归档项目需显式传 is_archived=true。
+        params = {"is_archived": "true"} if include_archived else {}
+        data = await self._request("GET", "/projects", params=params)
         return data or []
+
+    # ---- 项目 CRUD ----
+    async def create_project(self, fields: dict) -> dict:
+        """创建项目(同 endpoint 支持 parent_project_id 建子项目)。"""
+        return await self._request("PUT", "/projects", json=fields)
+
+    async def update_project(self, pid: int, fields: dict) -> dict:
+        return await self._request("POST", f"/projects/{pid}", json=fields)
+
+    async def delete_project(self, pid: int) -> None:
+        await self._request("DELETE", f"/projects/{pid}")
 
     async def get_labels(self) -> list[dict]:
         data = await self._request("GET", "/labels")
@@ -130,6 +143,8 @@ class VikunjaClient:
             "description": description,
             "project_id": req.project_id,
             "priority": req.priority,
+            "repeat_after": req.repeat_after,
+            "repeat_mode": req.repeat_mode,
         }
         if req.due_date:
             body["due_date"] = _to_rfc3339(req.due_date)

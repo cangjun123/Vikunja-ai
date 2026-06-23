@@ -53,6 +53,10 @@
           <option value="project">按项目</option>
           <option value="title">按标题</option>
         </select>
+        <label class="filter-check" title="显示已归档项目的任务">
+          <input type="checkbox" id="filter-archived">
+          <span>显示归档</span>
+        </label>
       </div>
     </section>
 
@@ -103,9 +107,19 @@
               </select>
             </div>
             <div class="field">
-              <label for="m-labels">标签(逗号分隔)</label>
-              <input type="text" id="m-labels" class="input" placeholder="例如:报销, 紧急">
+              <label for="m-repeat">重复</label>
+              <select id="m-repeat" class="input">
+                <option value="none">不重复</option>
+                <option value="daily">每天</option>
+                <option value="weekly">每周</option>
+                <option value="monthly">每月</option>
+                <option value="yearly">每年</option>
+              </select>
             </div>
+          </div>
+          <div class="field">
+            <label for="m-labels">标签(逗号分隔)</label>
+            <input type="text" id="m-labels" class="input" placeholder="例如:报销, 紧急">
           </div>
           <div class="field">
             <label for="m-desc">描述</label>
@@ -117,6 +131,67 @@
           <span class="modal-foot-spacer"></span>
           <button id="modal-cancel" class="btn btn-ghost">取消</button>
           <button id="modal-save" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 项目编辑/新建弹窗 -->
+    <div id="proj-modal-mask" class="modal-mask" hidden>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <h2 id="proj-modal-title">编辑项目</h2>
+          <button id="proj-modal-close" class="btn-icon" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="pm-title">标题</label>
+            <input type="text" id="pm-title" class="input">
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label for="pm-parent">父项目</label>
+              <select id="pm-parent" class="input">
+                <option value="0">(顶层)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="pm-identifier">标识符(可选,≤10 字)</label>
+              <input type="text" id="pm-identifier" class="input" maxlength="10">
+            </div>
+          </div>
+          <div class="field">
+            <label>颜色</label>
+            <div class="color-palette" id="pm-color-palette">
+              <button type="button" class="color-swatch color-none" data-color="" title="默认"></button>
+              <button type="button" class="color-swatch" data-color="#6366f1" style="background:#6366f1" title="靛蓝"></button>
+              <button type="button" class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6" title="紫色"></button>
+              <button type="button" class="color-swatch" data-color="#ec4899" style="background:#ec4899" title="粉色"></button>
+              <button type="button" class="color-swatch" data-color="#ef4444" style="background:#ef4444" title="红色"></button>
+              <button type="button" class="color-swatch" data-color="#f97316" style="background:#f97316" title="橙色"></button>
+              <button type="button" class="color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="琥珀"></button>
+              <button type="button" class="color-swatch" data-color="#10b981" style="background:#10b981" title="绿色"></button>
+              <button type="button" class="color-swatch" data-color="#14b8a6" style="background:#14b8a6" title="青色"></button>
+              <button type="button" class="color-swatch" data-color="#3b82f6" style="background:#3b82f6" title="蓝色"></button>
+              <input type="color" id="pm-color-custom" class="color-custom" value="#6366f1" title="自定义颜色">
+            </div>
+          </div>
+          <div class="field field-inline">
+            <label class="checkbox-label">
+              <input type="checkbox" id="pm-favorite"> <span>收藏(置顶)</span>
+            </label>
+          </div>
+          <div class="field field-inline">
+            <label class="checkbox-label">
+              <input type="checkbox" id="pm-archived"> <span>归档(隐藏该项目下任务)</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="proj-modal-delete" class="btn btn-ghost btn-danger" hidden>删除</button>
+          <button id="proj-modal-add-sub" class="btn btn-ghost" hidden>+ 子项目</button>
+          <span class="modal-foot-spacer"></span>
+          <button id="proj-modal-cancel" class="btn btn-ghost">取消</button>
+          <button id="proj-modal-save" class="btn btn-primary">保存</button>
         </div>
       </div>
     </div>

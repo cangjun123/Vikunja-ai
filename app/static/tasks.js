@@ -95,11 +95,16 @@ function collectFilters() {
 function applyFilters(tasks, opts = {}) {
   const { ignoreStatus = false } = opts;
   const { proj, status } = collectFilters();
+  const showArchived = $("filter-archived") && $("filter-archived").checked;
   return tasks.filter((t) => {
     if (proj && t.project_id !== proj) return false;
     if (!ignoreStatus) {
       if (status === "open" && t.done) return false;
       if (status === "done" && !t.done) return false;
+    }
+    if (!showArchived) {
+      const p = getProject(t.project_id);
+      if (p && p.is_archived) return false;
     }
     return true;
   });
@@ -154,11 +159,13 @@ function renderList() {
         <div class="task-row ${doneCls}" data-tid="${t.id}">
           <button class="cell-check" data-act="toggle-done" title="切换完成">${check}</button>
           <span class="cell-dot" style="background:${projectColor(t.project_id)}"></span>
-          <span class="cell-title">${esc(t.title)}</span>
+          <span class="cell-title">${repeatIcon(t)}${esc(t.title)}</span>
           <span class="cell-proj">${esc(projectTitle(t.project_id))}</span>
-          <span class="cell-prio">${pri}</span>
           <span class="cell-labels">${labels}</span>
-          <span class="cell-due-wrap">${due}</span>
+          <span class="cell-right">
+            <span class="cell-prio">${pri}</span>
+            <span class="cell-due-wrap">${due}</span>
+          </span>
         </div>`;
     })
     .join("");
@@ -262,7 +269,7 @@ function renderBoardCard(t) {
   return `
     <div class="board-card ${t.done ? "task-done" : ""}" draggable="true" data-tid="${t.id}">
       ${priBar}
-      <div class="card-title">${esc(t.title)}</div>
+      <div class="card-title">${repeatIcon(t)}${esc(t.title)}</div>
       <div class="card-meta">
         <span class="card-proj">
           <span class="cell-dot" style="background:${projectColor(t.project_id)}"></span>
@@ -434,6 +441,9 @@ function renderTree() {
     .join("");
   container.innerHTML = `
     <div class="card tree-card">
+      <div class="tree-toolbar">
+        <button class="btn btn-ghost btn-tiny" data-act="new-project-top">+ 项目</button>
+      </div>
       ${html || '<div class="empty">暂无项目</div>'}
     </div>`;
 }
@@ -455,13 +465,18 @@ function renderTreeNode(project, tasksByProject, filterProj, depth) {
   const totalDone = tasks.filter((t) => t.done).length;
   const badge = `<span class="tree-badge">${totalDone}/${tasks.length}</span>`;
   const favorite = project.is_favorite ? '<span class="tree-star">★</span>' : "";
+  const archivedBadge = project.is_archived
+    ? '<span class="archived-badge">已归档</span>'
+    : "";
   const projRow = `
-    <div class="tree-row tree-proj" style="--depth:${depth}" data-pid="${project.id}">
+    <div class="tree-row tree-proj ${project.is_archived ? "is-archived" : ""}" style="--depth:${depth}" data-pid="${project.id}">
       <span class="tree-toggle" data-pid="${project.id}">▾</span>
       <span class="cell-dot" style="background:${safeColor(project.hex_color)}"></span>
       <span class="tree-label">${esc(project.title)}</span>
+      ${archivedBadge}
       ${favorite}
       ${badge}
+      <button class="tree-edit" data-act="edit-project" data-pid="${project.id}" title="编辑项目">✎</button>
       <button class="tree-add" data-act="new-in-project" data-pid="${project.id}" title="在此项目新建">＋</button>
     </div>`;
   const childrenHtml = children
@@ -473,7 +488,7 @@ function renderTreeNode(project, tasksByProject, filterProj, depth) {
       return `
         <div class="tree-row tree-task ${t.done ? "task-done" : ""}" style="--depth:${depth + 1}" data-tid="${t.id}">
           <button class="tree-check" data-act="toggle-done" title="切换完成">${t.done ? "✓" : "○"}</button>
-          <span class="tree-task-title">${esc(t.title)}</span>
+          <span class="tree-task-title">${repeatIcon(t)}${esc(t.title)}</span>
           ${
             t.priority
               ? `<span class="prio-badge ${priorityClass(t.priority)}">P${t.priority}</span>`
@@ -532,7 +547,8 @@ function populateProjectFilter() {
     const children = (childrenMap.get(parent) || []).slice().sort(sortProjects);
     for (const p of children) {
       const indent = "  ".repeat(depth) + (depth ? "└ " : "");
-      opts.push(`<option value="${p.id}">${esc(indent + p.title)}</option>`);
+      const suffix = p.is_archived ? " (已归档)" : "";
+      opts.push(`<option value="${p.id}">${esc(indent + p.title + suffix)}</option>`);
       walk(p.id, depth + 1);
     }
   };
@@ -685,7 +701,8 @@ function populateModalProjectSelect() {
     const children = (childrenMap.get(parent) || []).slice().sort(sortProjects);
     for (const p of children) {
       const indent = "  ".repeat(depth) + (depth ? "└ " : "");
-      opts.push(`<option value="${p.id}">${esc(indent + p.title)}</option>`);
+      const suffix = p.is_archived ? " (已归档)" : "";
+      opts.push(`<option value="${p.id}">${esc(indent + p.title + suffix)}</option>`);
       walk(p.id, depth + 1);
     }
   };
@@ -703,10 +720,11 @@ function openEditModal(taskId) {
   $("m-project").value = String(t.project_id);
   $("m-due").value = t.due_date ? fmtDate(t.due_date) : "";
   $("m-priority").value = String(t.priority || 0);
+  $("m-repeat").value = repeatToSelect(t.repeat_after || 0, t.repeat_mode || 0);
   $("m-labels").value = (t.labels || []).map((l) => l.title).join(", ");
   // description 在 Vikunja 是 HTML(markdown 渲染后的),这里简单去标签显示
   $("m-desc").value = stripHtml(t.description || "");
-  showModal();
+  showModal(false);
 }
 function openNewModal(defaultPid) {
   editingTaskId = null;
@@ -718,13 +736,44 @@ function openNewModal(defaultPid) {
   $("m-project").value = String(defaultPid || (pids.length ? pids[0] : ""));
   $("m-due").value = "";
   $("m-priority").value = "0";
+  $("m-repeat").value = "none";
   $("m-labels").value = "";
   $("m-desc").value = "";
-  showModal();
+  showModal(true);
 }
-function showModal() {
+function showModal(autofocus = true) {
   $("modal-mask").hidden = false;
-  setTimeout(() => $("m-title").focus(), 30);
+  if (autofocus) setTimeout(() => $("m-title").focus(), 30);
+}
+// 重复任务:repeat_after(秒) + repeat_mode(0=按秒,1=按月,2=从当前日期) ↔ select value
+function repeatToSelect(after, mode) {
+  if (mode === 1) return "monthly";
+  if (!after) return "none";
+  if (after === 86400) return "daily";
+  if (after === 604800) return "weekly";
+  if (after === 31536000) return "yearly";
+  return "none"; // 自定义秒数回退到 none(后端原值不变更)
+}
+function selectToRepeat(value) {
+  switch (value) {
+    case "daily":   return { repeat_after: 86400, repeat_mode: 0 };
+    case "weekly":  return { repeat_after: 604800, repeat_mode: 0 };
+    case "monthly": return { repeat_after: 2592000, repeat_mode: 1 };
+    case "yearly":  return { repeat_after: 31536000, repeat_mode: 0 };
+    default:        return { repeat_after: 0, repeat_mode: 0 };
+  }
+}
+function isRepeating(t) {
+  return (t.repeat_after && t.repeat_after > 0) || (t.repeat_mode && t.repeat_mode !== 0);
+}
+function repeatIcon(t) {
+  return isRepeating(t)
+    ? `<span class="repeat-ico" title="重复:${repeatLabel(t)}">↻</span>`
+    : "";
+}
+function repeatLabel(t) {
+  const v = repeatToSelect(t.repeat_after || 0, t.repeat_mode || 0);
+  return { daily: "每天", weekly: "每周", monthly: "每月", yearly: "每年" }[v] || "自定义";
 }
 function closeModal() {
   $("modal-mask").hidden = true;
@@ -741,6 +790,7 @@ async function saveModal() {
   if (!pid) { flash("请选择项目"); return; }
   const due = $("m-due").value || null;
   const priority = Number($("m-priority").value);
+  const repeat = selectToRepeat($("m-repeat").value);
   const labels = $("m-labels").value.split(",").map((s) => s.trim()).filter(Boolean);
   const description = $("m-desc").value;
   // 先捕获 id,closeModal() 会把 editingTaskId 清成 null
@@ -754,6 +804,7 @@ async function saveModal() {
       priority,
       labels,
       description,
+      ...repeat,
     });
   } else {
     await createFromModal({
@@ -764,7 +815,171 @@ async function saveModal() {
       labels,
       description,
       checklist: [],
+      ...repeat,
     });
+  }
+}
+
+/* ============ 项目弹窗(Phase 3)============ */
+let editingProjectId = null;
+let _pmColor = "";
+
+function setCurrentColor(c) {
+  _pmColor = c || "";
+  document.querySelectorAll("#pm-color-palette .color-swatch").forEach((b) => {
+    b.classList.toggle("selected", b.dataset.color === _pmColor);
+  });
+  // 同步 color input 显示;非预设色也展示出来
+  if (_pmColor && /^#[0-9a-fA-F]{6}$/.test(_pmColor)) {
+    $("pm-color-custom").value = _pmColor;
+  }
+}
+function getCurrentColor() { return _pmColor; }
+
+function populateProjectParentSelect(excludeSubtreeId) {
+  // 排除编辑项目自身及其所有后代,避免循环父子关系
+  const sel = $("pm-parent");
+  const excludeSet = new Set();
+  if (excludeSubtreeId) {
+    const collect = (pid) => {
+      excludeSet.add(pid);
+      for (const c of childrenMap.get(pid) || []) collect(c.id);
+    };
+    collect(excludeSubtreeId);
+  }
+  const opts = ['<option value="0">(顶层)</option>'];
+  const walk = (parent, depth) => {
+    const children = (childrenMap.get(parent) || []).slice().sort(sortProjects);
+    for (const p of children) {
+      if (excludeSet.has(p.id)) continue;
+      const indent = "  ".repeat(depth) + (depth ? "└ " : "");
+      const suffix = p.is_archived ? " (已归档)" : "";
+      opts.push(`<option value="${p.id}">${esc(indent + p.title + suffix)}</option>`);
+      walk(p.id, depth + 1);
+    }
+  };
+  walk(0, 0);
+  sel.innerHTML = opts.join("");
+}
+
+function openProjectModal(pid) {
+  if (pid) {
+    const p = getProject(pid);
+    if (!p) return;
+    editingProjectId = pid;
+    $("proj-modal-title").textContent = "编辑项目";
+    $("proj-modal-delete").hidden = false;
+    $("proj-modal-add-sub").hidden = false;
+    populateProjectParentSelect(pid);
+    $("pm-title").value = p.title || "";
+    $("pm-parent").value = String(p.parent_project_id || 0);
+    $("pm-parent").disabled = false;
+    $("pm-identifier").value = p.identifier || "";
+    $("pm-favorite").checked = !!p.is_favorite;
+    $("pm-archived").checked = !!p.is_archived;
+    setCurrentColor(p.hex_color || "");
+  } else {
+    editingProjectId = null;
+    $("proj-modal-title").textContent = "新建项目";
+    $("proj-modal-delete").hidden = true;
+    $("proj-modal-add-sub").hidden = true;
+    populateProjectParentSelect(null);
+    $("pm-title").value = "";
+    $("pm-parent").value = "0";
+    $("pm-parent").disabled = false;
+    $("pm-identifier").value = "";
+    $("pm-favorite").checked = false;
+    $("pm-archived").checked = false;
+    setCurrentColor("");
+  }
+  $("proj-modal-mask").hidden = false;
+}
+
+function openSubProjectModal(parentPid) {
+  editingProjectId = null;
+  $("proj-modal-title").textContent = "新建子项目";
+  $("proj-modal-delete").hidden = true;
+  $("proj-modal-add-sub").hidden = true;
+  populateProjectParentSelect(null);
+  $("pm-title").value = "";
+  $("pm-parent").value = String(parentPid || 0);
+  $("pm-parent").disabled = true; // 新建子项目时父项固定
+  $("pm-identifier").value = "";
+  $("pm-favorite").checked = false;
+  $("pm-archived").checked = false;
+  setCurrentColor("");
+  $("proj-modal-mask").hidden = false;
+}
+
+function closeProjectModal() {
+  $("proj-modal-mask").hidden = true;
+  editingProjectId = null;
+  $("pm-parent").disabled = false;
+}
+
+async function saveProjectModal() {
+  const title = $("pm-title").value.trim();
+  if (!title) { flash("项目标题不能为空"); $("pm-title").focus(); return; }
+  const fields = {
+    title,
+    parent_project_id: Number($("pm-parent").value) || 0,
+    hex_color: getCurrentColor(),
+    is_favorite: $("pm-favorite").checked,
+    is_archived: $("pm-archived").checked,
+  };
+  const identifier = $("pm-identifier").value.trim();
+  if (identifier) fields.identifier = identifier;
+
+  const editingId = editingProjectId;
+  closeProjectModal();
+  try {
+    let resp;
+    if (editingId) {
+      resp = await fetch(`/api/projects/${editingId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+    } else {
+      resp = await fetch("/api/projects", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+    }
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${resp.status}`);
+    }
+    await load();
+    flash(editingId ? "项目已更新" : "项目已创建", "info");
+  } catch (e) {
+    flash(`保存项目失败:${e.message}`);
+  }
+}
+
+async function deleteProjectFromModal(pid) {
+  if (!pid) return;
+  const p = getProject(pid);
+  const taskCount = dataset.tasks.filter((t) => t.project_id === pid).length;
+  const msg = taskCount
+    ? `此项目下有 ${taskCount} 个任务。确认删除项目"${p ? p.title : ""}"?Vikunja 可能级联删除或拒绝,操作不可撤销。`
+    : `确认删除项目"${p ? p.title : ""}"?操作不可撤销。`;
+  if (!confirm(msg)) return;
+  closeProjectModal();
+  try {
+    const resp = await fetch(`/api/projects/${pid}`, { method: "DELETE" });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${resp.status}`);
+    }
+    await load();
+    flash("项目已删除", "info");
+  } catch (e) {
+    flash(`删除项目失败:${e.message}`);
+    await load();
   }
 }
 
@@ -849,14 +1064,28 @@ window.addEventListener("DOMContentLoaded", () => {
       if (t) patchTask(tid, { done: !t.done });
       return;
     }
-    // 2. 树里点 + 新建
+    // 2. 树里点 + 新建任务
     const newBtn = e.target.closest('[data-act="new-in-project"]');
     if (newBtn) {
       e.stopPropagation();
       openNewModal(Number(newBtn.dataset.pid));
       return;
     }
-    // 3. 点任务行/卡片 → 编辑
+    // 3. 树里点 ✎ 编辑项目
+    const editProjBtn = e.target.closest('[data-act="edit-project"]');
+    if (editProjBtn) {
+      e.stopPropagation();
+      openProjectModal(Number(editProjBtn.dataset.pid));
+      return;
+    }
+    // 4. 树顶部「+ 项目」
+    const newProjTop = e.target.closest('[data-act="new-project-top"]');
+    if (newProjTop) {
+      e.stopPropagation();
+      openProjectModal(null);
+      return;
+    }
+    // 5. 点任务行/卡片 → 编辑
     const item = e.target.closest("[data-tid]");
     if (item) openEditModal(Number(item.dataset.tid));
   });
@@ -885,8 +1114,45 @@ window.addEventListener("DOMContentLoaded", () => {
   $("m-title").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); saveModal(); }
   });
+
+  // 归档筛选
+  const archivedFilter = $("filter-archived");
+  if (archivedFilter) archivedFilter.addEventListener("change", renderCurrent);
+
+  // 项目弹窗
+  $("proj-modal-close").addEventListener("click", closeProjectModal);
+  $("proj-modal-cancel").addEventListener("click", closeProjectModal);
+  $("proj-modal-save").addEventListener("click", saveProjectModal);
+  $("proj-modal-delete").addEventListener("click", () => {
+    if (editingProjectId) deleteProjectFromModal(editingProjectId);
+  });
+  $("proj-modal-add-sub").addEventListener("click", () => {
+    if (editingProjectId) {
+      const pid = editingProjectId;
+      closeProjectModal();
+      openSubProjectModal(pid);
+    }
+  });
+  $("proj-modal-mask").addEventListener("click", (e) => {
+    if (e.target === $("proj-modal-mask")) closeProjectModal();
+  });
+  $("pm-color-palette").addEventListener("click", (e) => {
+    const sw = e.target.closest(".color-swatch");
+    if (!sw) return;
+    setCurrentColor(sw.dataset.color || "");
+  });
+  $("pm-color-custom").addEventListener("input", (e) => {
+    setCurrentColor(e.target.value);
+  });
+  $("pm-title").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveProjectModal(); }
+  });
+
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("modal-mask").hidden) closeModal();
+    if (e.key === "Escape") {
+      if (!$("proj-modal-mask").hidden) closeProjectModal();
+      else if (!$("modal-mask").hidden) closeModal();
+    }
   });
 
   load();

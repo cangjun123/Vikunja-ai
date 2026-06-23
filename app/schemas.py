@@ -34,6 +34,8 @@ class CreateTaskRequest(BaseModel):
     priority: int = Field(default=1, ge=0, le=5)
     labels: list[str] = Field(default_factory=list)
     checklist: list[str] = Field(default_factory=list)
+    repeat_after: int = Field(default=0, ge=0)
+    repeat_mode: int = Field(default=0, ge=0, le=2)
 
 
 class OkResponse(BaseModel):
