@@ -250,6 +250,7 @@ function buildCreateFields(action) {
   const descInp = frag.querySelector('[data-k="description"]');
   const dueInp = frag.querySelector('[data-k="due_date"]');
   const prioSel = frag.querySelector('[data-k="priority"]');
+  const repeatSel = frag.querySelector('[data-k="repeat"]');
   const projSel = frag.querySelector('[data-k="project_id"]');
 
   projSel.innerHTML = '<option value="">(未选择)</option>';
@@ -264,6 +265,7 @@ function buildCreateFields(action) {
   titleInp.value = action.title || "";
   dueInp.value = (action.due_date || "").slice(0, 10);
   prioSel.value = String(action.priority ?? 1);
+  repeatSel.value = repeatToSelectValue(action.repeat_after, action.repeat_mode);
   descInp.value = action.description || "";
 
   const labels = Array.isArray(action.labels) ? [...action.labels] : [];
@@ -279,6 +281,7 @@ function buildCreateFields(action) {
 
   const collect = () => {
     const projId = parseInt(projSel.value, 10);
+    const rep = repeatFromSelect(repeatSel.value);
     return {
       type: "create",
       title: titleInp.value.trim(),
@@ -286,12 +289,33 @@ function buildCreateFields(action) {
       project_id: isNaN(projId) ? null : projId,
       due_date: dueInp.value || null,
       priority: parseInt(prioSel.value, 10) || 0,
+      repeat_after: rep.repeat_after,
+      repeat_mode: rep.repeat_mode,
       labels: [...labels],
       checklist: [...checklist],
     };
   };
 
   return { root: frag, collect };
+}
+
+/* ============ 重复任务:select ↔ repeat_after/mode ============ */
+function repeatFromSelect(v) {
+  switch (v) {
+    case "daily":   return { repeat_after: 86400, repeat_mode: 0 };
+    case "weekly":  return { repeat_after: 604800, repeat_mode: 0 };
+    case "monthly": return { repeat_after: 2592000, repeat_mode: 1 };
+    case "yearly":  return { repeat_after: 31536000, repeat_mode: 0 };
+    default:        return { repeat_after: 0, repeat_mode: 0 };
+  }
+}
+function repeatToSelectValue(after, mode) {
+  if (mode === 1) return "monthly";
+  if (!after) return "none";
+  if (after === 86400) return "daily";
+  if (after === 604800) return "weekly";
+  if (after === 31536000) return "yearly";
+  return "none"; // 自定义秒数回退到 none(后端原值不变更)
 }
 
 /* ============ 单条动作卡片渲染 ============ */

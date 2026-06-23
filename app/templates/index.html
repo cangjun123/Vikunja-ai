@@ -129,11 +129,21 @@
         </select>
       </div>
       <div class="field">
-        <label>标签</label>
-        <div class="tags-wrap input">
-          <div class="tags" data-k="labels-display"></div>
-          <input type="text" data-k="labels-input" class="tag-input" placeholder="回车添加">
-        </div>
+        <label>重复</label>
+        <select data-k="repeat" class="input">
+          <option value="none">不重复</option>
+          <option value="daily">每天</option>
+          <option value="weekly">每周</option>
+          <option value="monthly">每月</option>
+          <option value="yearly">每年</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>标签</label>
+      <div class="tags-wrap input">
+        <div class="tags" data-k="labels-display"></div>
+        <input type="text" data-k="labels-input" class="tag-input" placeholder="回车添加">
       </div>
     </div>
     <div class="field">
