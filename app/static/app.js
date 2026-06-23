@@ -40,6 +40,17 @@ function renderHistory() {
   }
 }
 
+/* ============ 错误格式化 ============ */
+function fmtApiError(status, data) {
+  // FastAPI 校验错误返回 detail 为数组 [{loc, msg, type}…];其它是字符串。
+  const d = data && data.detail;
+  if (Array.isArray(d) && d.length) {
+    return d.map((x) => x.msg || JSON.stringify(x)).join("; ");
+  }
+  if (typeof d === "string" && d) return d;
+  return `请求失败 (${status})`;
+}
+
 /* ============ 状态提示 ============ */
 function setStatus(msg, type, html) {
   const el = $("status");
@@ -231,7 +242,7 @@ async function runSuggest(isFirst) {
     if (resp.status === 401) { window.location.href = "/login"; return; }
     if (!resp.ok) {
       const e = await resp.json().catch(() => ({}));
-      throw new Error(e.detail || `请求失败 (${resp.status})`);
+      throw new Error(fmtApiError(resp.status, e));
     }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -302,7 +313,7 @@ async function createTask() {
     });
     if (resp.status === 401) { window.location.href = "/login"; return; }
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.detail || `请求失败 (${resp.status})`);
+    if (!resp.ok) throw new Error(fmtApiError(resp.status, data));
     const link = data.task_url
       ? ` <a href="${esc(data.task_url)}" target="_blank">在 Vikunja 查看 →</a>`
       : "";

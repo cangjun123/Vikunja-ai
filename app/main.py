@@ -68,6 +68,14 @@ async def index(request: Request):
     )
 
 
+@app.get("/tasks", response_class=HTMLResponse)
+async def tasks_page(request: Request):
+    """任务可视化看板页:列表 / 看板 / 日历 / 树(Phase 1 只读)。"""
+    if not is_logged_in(request):
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse(request, "tasks.html", {})
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse(request, "login.html", {"error": ""})
@@ -103,6 +111,36 @@ async def api_context(_: None = Depends(require_api)):
         "projects": [{"id": p.get("id"), "title": p.get("title", "")} for p in projects],
         "labels": [l.get("title", "") for l in labels],
     }
+
+
+@app.get("/api/tasks")
+async def api_tasks(_: None = Depends(require_api)):
+    """一次性返回 {tasks, projects, labels},供看板页四个视图共用。"""
+    try:
+        projects = await vikunja.get_projects()
+        labels = await vikunja.get_labels()
+        tasks = await vikunja.get_all_tasks()
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    # 只透出前端需要的字段(projects 保留层级/颜色信息)
+    slim_projects = [
+        {
+            "id": p.get("id"),
+            "title": p.get("title", ""),
+            "parent_project_id": p.get("parent_project_id", 0) or 0,
+            "hex_color": p.get("hex_color", "") or "",
+            "identifier": p.get("identifier", "") or "",
+            "position": p.get("position", 0) or 0,
+            "is_favorite": bool(p.get("is_favorite", False)),
+            "is_archived": bool(p.get("is_archived", False)),
+        }
+        for p in projects
+    ]
+    slim_labels = [
+        {"id": l.get("id"), "title": l.get("title", ""), "hex_color": l.get("hex_color", "") or ""}
+        for l in labels
+    ]
+    return {"tasks": tasks, "projects": slim_projects, "labels": slim_labels}
 
 
 @app.post("/api/suggest")

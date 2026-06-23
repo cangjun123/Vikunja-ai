@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#6366f1">
+  <title>任务看板 · AI 任务助手</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">✦</div>
+      <div class="brand-text">
+        <div class="brand-title">AI 任务助手</div>
+        <div class="brand-sub">for Vikunja</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button id="btn-refresh" class="btn-icon" title="刷新" aria-label="刷新">↻</button>
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="btn-icon" title="退出" aria-label="退出">⏻</button>
+      </form>
+    </div>
+  </header>
+
+  <nav class="pagenav">
+    <a href="/" class="pagenav-link">✨ AI 建任务</a>
+    <a href="/tasks" class="pagenav-link active">📋 任务看板</a>
+  </nav>
+
+  <main class="container container-wide">
+    <!-- 工具栏:视图 tab + 筛选 -->
+    <section class="toolbar card">
+      <div class="tabs" id="view-tabs">
+        <a href="#list" class="tab" data-view="list">📋 列表</a>
+        <a href="#board" class="tab" data-view="board">🗂 看板</a>
+        <a href="#calendar" class="tab" data-view="calendar">📅 日历</a>
+        <a href="#tree" class="tab" data-view="tree">🌳 树</a>
+      </div>
+      <div class="filters">
+        <select id="filter-project" class="input filter-input" title="按项目筛选">
+          <option value="">所有项目</option>
+        </select>
+        <select id="filter-status" class="input filter-input" title="按状态筛选">
+          <option value="all">全部</option>
+          <option value="open" selected>未完成</option>
+          <option value="done">已完成</option>
+        </select>
+        <select id="sort-by" class="input filter-input" title="排序">
+          <option value="due" selected>按截止</option>
+          <option value="priority">按优先级</option>
+          <option value="project">按项目</option>
+          <option value="title">按标题</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- 加载/错误 占位 -->
+    <div id="loading" class="status info">
+      <span class="spinner"></span><span>正在加载任务…</span>
+    </div>
+    <div id="err-box" class="status error" hidden></div>
+
+    <!-- 视图渲染容器(一次只渲染一个视图) -->
+    <section id="view-container"></section>
+  </main>
+
+  <script src="/static/tasks.js"></script>
+</body>
+</html>

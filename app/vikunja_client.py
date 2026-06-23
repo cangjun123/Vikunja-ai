@@ -60,6 +60,41 @@ class VikunjaClient:
         data = await self._request("GET", "/tasks", params=params)
         return data or []
 
+    async def get_all_tasks(self, per_page: int = 50) -> list[dict]:
+        """分页拉取全部任务(含已完成),供看板/日历/树视图使用。
+
+        Vikunja 的 /tasks 支持分页,响应头 X-Pagination-Total-Pages 给出总页数。
+        per_page=50,逐页拼接直到拿完。
+        """
+        all_tasks: list[dict] = []
+        page = 1
+        # 先拉第一页,顺便拿总页数(_request 目前只返回 json,这里单独走一次 client
+        # 以读取响应头)。
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            url = self.api + "/tasks"
+            params = {"per_page": str(per_page), "sort": "due_date"}
+            while True:
+                params_page = {**params, "page": str(page)}
+                try:
+                    resp = await client.get(
+                        url, headers=self.headers, params=params_page
+                    )
+                except httpx.RequestError as e:
+                    raise VikunjaError(f"无法连接 Vikunja: {e}") from e
+                if resp.status_code >= 400:
+                    raise VikunjaError(
+                        f"Vikunja GET /tasks -> {resp.status_code}: {resp.text[:300]}"
+                    )
+                batch = resp.json() if resp.content else []
+                if not isinstance(batch, list):
+                    break
+                all_tasks.extend(batch)
+                total_pages = int(resp.headers.get("X-Pagination-Total-Pages", "1") or "1")
+                if page >= total_pages or len(batch) < per_page:
+                    break
+                page += 1
+        return all_tasks
+
     # ---- 标签 ----
     async def create_label(self, title: str) -> dict:
         return await self._request("PUT", "/labels", json={"title": title})
