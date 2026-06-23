@@ -64,6 +64,62 @@
 
     <!-- 视图渲染容器(一次只渲染一个视图) -->
     <section id="view-container"></section>
+
+    <!-- 新建任务按钮(FAB) -->
+    <button id="btn-new-task" class="fab" title="新建任务" aria-label="新建任务">＋</button>
+
+    <!-- 编辑/新建任务弹窗 -->
+    <div id="modal-mask" class="modal-mask" hidden>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <h2 id="modal-title">编辑任务</h2>
+          <button id="modal-close" class="btn-icon" aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="m-title">标题</label>
+            <input type="text" id="m-title" class="input">
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label for="m-project">项目</label>
+              <select id="m-project" class="input"></select>
+            </div>
+            <div class="field">
+              <label for="m-due">截止日期</label>
+              <input type="date" id="m-due" class="input">
+            </div>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label for="m-priority">优先级</label>
+              <select id="m-priority" class="input">
+                <option value="0">0 · 无</option>
+                <option value="1">1 · 低</option>
+                <option value="2">2 · 较低</option>
+                <option value="3">3 · 中</option>
+                <option value="4">4 · 较高</option>
+                <option value="5">5 · 紧急</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="m-labels">标签(逗号分隔)</label>
+              <input type="text" id="m-labels" class="input" placeholder="例如:报销, 紧急">
+            </div>
+          </div>
+          <div class="field">
+            <label for="m-desc">描述</label>
+            <textarea id="m-desc" class="input" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="modal-delete" class="btn btn-ghost btn-danger" hidden>删除</button>
+          <span class="modal-foot-spacer"></span>
+          <button id="modal-cancel" class="btn btn-ghost">取消</button>
+          <button id="modal-save" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script src="/static/tasks.js"></script>

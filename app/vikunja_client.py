@@ -159,6 +159,69 @@ class VikunjaClient:
     def task_url(self, task_id: int) -> str:
         return f"{self.base_url}/tasks/{task_id}"
 
+    # ---- 编辑(Phase 2)----
+    async def update_task(self, task_id: int, fields: dict) -> dict:
+        """部分更新任务。Vikunja 用 POST /tasks/{id} 做更新,传啥改啥。
+
+        特殊处理:
+        - due_date 空字符串 → Go 零值时间(清空)。
+        - labels 为标题字符串列表时,做 add/remove diff 同步
+          (Vikunja POST body 里的 labels 字段不会被持久化,跟创建时一样)。
+        """
+        fields = dict(fields)  # 不修改入参
+        # 标签 diff
+        if "labels" in fields:
+            titles = fields.pop("labels")
+            await self._sync_task_labels(task_id, titles or [])
+
+        body = _normalize_task_body(fields)
+        updated = await self._request("POST", f"/tasks/{task_id}", json=body)
+        # 如果只改了标签,fields 此刻是空的,POST 仍会返回当前完整任务对象,够用。
+        return updated
+
+    async def _sync_task_labels(self, task_id: int, titles: list[str]) -> None:
+        """把任务的标签同步成给定标题列表(补缺、删多)。"""
+        wanted_titles = {t.strip() for t in titles if t and t.strip()}
+        wanted = await self.ensure_labels(sorted(wanted_titles))
+        wanted_ids = {l["id"] for l in wanted}
+        # 现有标签
+        current_raw = await self._request("GET", f"/tasks/{task_id}/labels") or []
+        current = [
+            l["label_id"] if "label_id" in l else l.get("id")
+            for l in current_raw
+            if isinstance(l, dict)
+        ]
+        current_ids = {i for i in current if i is not None}
+        # 添加缺少的
+        for lid in wanted_ids - current_ids:
+            try:
+                await self._request(
+                    "PUT", f"/tasks/{task_id}/labels", json={"label_id": lid}
+                )
+            except VikunjaError as e:
+                if "8001" not in str(e) and "already exists" not in str(e):
+                    logger.warning("补加标签 %s 失败: %s", lid, e)
+        # 删除多余的
+        for lid in current_ids - wanted_ids:
+            try:
+                await self._request("DELETE", f"/tasks/{task_id}/labels/{lid}")
+            except VikunjaError as e:
+                logger.warning("删除标签 %s 失败: %s", lid, e)
+
+    async def set_done(self, task_id: int, done: bool) -> dict:
+        """切换完成状态(对 update_task 的薄封装,语义更清楚)。"""
+        return await self.update_task(task_id, {"done": bool(done)})
+
+    async def set_done(self, task_id: int, done: bool) -> dict:
+        """切换完成状态(对 update_task 的薄封装,语义更清楚)。"""
+        return await self.update_task(task_id, {"done": bool(done)})
+
+    async def delete_task(self, task_id: int) -> None:
+        await self._request("DELETE", f"/tasks/{task_id}")
+
+    async def remove_task_label(self, task_id: int, label_id: int) -> None:
+        await self._request("DELETE", f"/tasks/{task_id}/labels/{label_id}")
+
 
 def _build_description(description: str, checklist: list[str]) -> str:
     parts: list[str] = []
@@ -180,3 +243,23 @@ def _to_rfc3339(date_str: str) -> str:
     # 带上本地时区
     local = dt.astimezone()
     return local.isoformat()
+
+
+# Vikunja 用 Go 零值时间表示"未设置";清理字段时需要传这个值。
+_GO_ZERO_TIME = "0001-01-01T00:00:00Z"
+
+
+def _normalize_task_body(fields: dict) -> dict:
+    """把前端传来的字段转成 Vikunja 接受的格式。
+
+    - due_date: "" 或 None → Go 零值(清空);YYYY-MM-DD → RFC3339
+    """
+    body = dict(fields)
+    if "due_date" in body:
+        v = body["due_date"]
+        if not v:
+            body["due_date"] = _GO_ZERO_TIME
+        elif isinstance(v, str) and len(v) == 10:
+            # YYYY-MM-DD → 带时区的 RFC3339
+            body["due_date"] = _to_rfc3339(v)
+    return body

@@ -694,3 +694,134 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
   .container-wide { padding: 12px 10px 90px; }
 }
 
+/* ===== Edit interactions ===== */
+.task-row, .board-card, .tree-task, .day-item, .unsched-item {
+  cursor: pointer;
+}
+.cell-check, .tree-check {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-2);
+  transition: transform .1s, color .1s;
+}
+.cell-check:hover, .tree-check:hover {
+  color: var(--primary);
+  transform: scale(1.15);
+}
+.tree-task .tree-check { color: var(--success); }
+
+/* New task button (FAB) */
+.fab {
+  position: fixed;
+  right: 22px;
+  bottom: 26px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 22px -6px rgba(99, 102, 241, .65);
+  display: grid;
+  place-items: center;
+  z-index: 25;
+  transition: transform .12s, background .12s;
+}
+.fab:hover { background: var(--primary-600); transform: scale(1.06); }
+.fab:active { transform: scale(.96); }
+
+/* Tree "new task in project" small button */
+.tree-add {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity .12s, color .12s, background .12s;
+}
+.tree-row:hover .tree-add { opacity: 1; }
+.tree-add:hover { color: var(--primary); background: var(--primary-soft); }
+
+/* Board DnD */
+.board-card:active { cursor: grabbing; }
+.board-card.dragging { opacity: .4; transform: rotate(1.5deg); }
+.board-col.drag-over {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+.board-col-body {
+  /* make whole column a drop target visually */
+  min-height: 40px;
+}
+.board-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+
+/* ===== Modal ===== */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(20, 23, 40, .42);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 80px -20px rgba(20, 23, 40, .4);
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-in .15s ease;
+}
+@keyframes modal-in {
+  from { transform: translateY(8px) scale(.98); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.modal-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-body .field:last-child { margin-bottom: 0; }
+.modal-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.modal-foot-spacer { flex: 1; }
+.btn-danger { color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+
+@media (max-width: 540px) {
+  .fab { right: 16px; bottom: 18px; width: 48px; height: 48px; font-size: 24px; }
+}
+

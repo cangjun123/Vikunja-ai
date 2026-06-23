@@ -1,6 +1,7 @@
-/* ===== 任务看板 —— 4 视图(Phase 1 只读)=====
+/* ===== 任务看板 —— 4 视图 + 编辑(Phase 2)=====
  * 数据:`fetch('/api/tasks')` 一次拉完,内存共享,视图切换不重复请求。
  * 路由:hash(#list/#board/#calendar/#tree)切换视图,支持刷新保位置、后退。
+ * 编辑:勾选完成 / 看板拖拽 / 点卡片改字段 / 新建 / 删除,全部乐观更新。
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
@@ -147,8 +148,8 @@ function renderList() {
         ? `<span class="prio-badge ${priorityClass(t.priority)}">P${t.priority}</span>`
         : '<span class="muted">—</span>';
       return `
-        <div class="task-row ${doneCls}">
-          <span class="cell-check">${check}</span>
+        <div class="task-row ${doneCls}" data-tid="${t.id}">
+          <button class="cell-check" data-act="toggle-done" title="切换完成">${check}</button>
           <span class="cell-dot" style="background:${projectColor(t.project_id)}"></span>
           <span class="cell-title">${esc(t.title)}</span>
           <span class="cell-proj">${esc(projectTitle(t.project_id))}</span>
@@ -212,8 +213,10 @@ function renderBoard() {
   const colsHtml = columns
     .map((col) => {
       const cards = col.tasks.map((t) => renderBoardCard(t)).join("");
+      const intent =
+        col.key === "open" ? "open" : col.key === "done" ? "done" : "p:" + col.key.slice(1);
       return `
-        <div class="board-col">
+        <div class="board-col" data-intent="${intent}">
           <div class="board-col-head">
             <span class="board-dot" style="background:${col.color}"></span>
             <span class="board-col-title">${esc(col.title)}</span>
@@ -227,6 +230,7 @@ function renderBoard() {
   container.innerHTML = `
     <div class="board-meta">
       <button id="board-toggle" class="btn btn-ghost btn-tiny">${modeLabel} · 点击切换</button>
+      <span class="board-hint">💡 拖动卡片切换状态/项目,点击卡片编辑</span>
     </div>
     <div class="board-scroll">
       <div class="board">${colsHtml}</div>
@@ -235,6 +239,7 @@ function renderBoard() {
     boardGroupMode = boardGroupMode === "status" ? "project" : "status";
     renderBoard();
   });
+  setupBoardDnD();
 }
 function renderBoardCard(t) {
   const priBar = t.priority
@@ -247,7 +252,7 @@ function renderBoardCard(t) {
     .map((l) => `<span class="mini-tag">${esc(l.title)}</span>`)
     .join("");
   return `
-    <div class="board-card ${t.done ? "task-done" : ""}">
+    <div class="board-card ${t.done ? "task-done" : ""}" draggable="true" data-tid="${t.id}">
       ${priBar}
       <div class="card-title">${esc(t.title)}</div>
       <div class="card-meta">
@@ -329,7 +334,7 @@ function renderCalendar() {
            ${unsched
              .map(
                (t) =>
-                 `<div class="unsched-item ${t.done ? "task-done" : ""}">
+                 `<div class="unsched-item ${t.done ? "task-done" : ""}" data-tid="${t.id}">
                     <span class="cell-dot" style="background:${projectColor(t.project_id)}"></span>
                     <span class="unsched-title">${esc(t.title)}</span>
                     <span class="unsched-proj">${esc(projectTitle(t.project_id))}</span>
@@ -385,7 +390,7 @@ function showDay(key, byDay) {
     ? list
         .map(
           (t) =>
-            `<div class="day-item ${t.done ? "task-done" : ""}">
+            `<div class="day-item ${t.done ? "task-done" : ""}" data-tid="${t.id}">
                <span class="cell-dot" style="background:${projectColor(t.project_id)}"></span>
                <span class="day-title">${esc(t.title)}</span>
                <span class="day-proj">${esc(projectTitle(t.project_id))}</span>
@@ -449,6 +454,7 @@ function renderTreeNode(project, tasksByProject, filterProj, depth) {
       <span class="tree-label">${esc(project.title)}</span>
       ${favorite}
       ${badge}
+      <button class="tree-add" data-act="new-in-project" data-pid="${project.id}" title="在此项目新建">＋</button>
     </div>`;
   const childrenHtml = children
     .map((c) => renderTreeNode(c, tasksByProject, filterProj, depth + 1))
@@ -457,8 +463,8 @@ function renderTreeNode(project, tasksByProject, filterProj, depth) {
     .map((t) => {
       const due = t.due_date ? fmtRelative(t.due_date) : "";
       return `
-        <div class="tree-row tree-task ${t.done ? "task-done" : ""}" style="--depth:${depth + 1}">
-          <span class="tree-check">${t.done ? "✓" : "○"}</span>
+        <div class="tree-row tree-task ${t.done ? "task-done" : ""}" style="--depth:${depth + 1}" data-tid="${t.id}">
+          <button class="tree-check" data-act="toggle-done" title="切换完成">${t.done ? "✓" : "○"}</button>
           <span class="tree-task-title">${esc(t.title)}</span>
           ${
             t.priority
@@ -565,6 +571,248 @@ async function load() {
   }
 }
 
+/* ============ 编辑:本地状态 + API ============ */
+let editingTaskId = null; // 非 null = 编辑此 id;null = 新建
+let flashTimer = null;
+
+function getTaskById(id) {
+  return dataset.tasks.find((t) => t.id === id) || null;
+}
+function normalizeTaskDates(t) {
+  t.due_date = normDate(t.due_date);
+  t.start_date = normDate(t.start_date);
+  if (t.done_at && String(t.done_at).startsWith("0001-01-01")) t.done_at = null;
+  return t;
+}
+function flash(msg, type = "error") {
+  const box = $("err-box");
+  box.textContent = msg;
+  box.className = "status " + type;
+  box.hidden = false;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    box.hidden = true;
+  }, type === "error" ? 5000 : 2000);
+}
+async function patchTask(taskId, fields) {
+  const t = getTaskById(taskId);
+  if (!t) return;
+  // 乐观更新
+  Object.assign(t, fields);
+  if ("due_date" in fields) t.due_date = fields.due_date || null;
+  if ("labels" in fields) {
+    // 后端会同步标签,但本地需立即显示。把字符串标题转成伪 label 对象。
+    t.labels = (fields.labels || []).map((title) => ({ title }));
+  }
+  renderCurrent();
+  try {
+    const resp = await fetch(`/api/tasks/${taskId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    if (data.task) {
+      // Vikunja 更新端点对未设/未查字段返回 null(比如 labels)。
+      // 只用非空字段覆盖,避免把乐观更新抹掉。
+      const cleaned = {};
+      for (const [k, v] of Object.entries(data.task)) {
+        if (v !== null && v !== undefined) cleaned[k] = v;
+      }
+      Object.assign(t, normalizeTaskDates(cleaned));
+      renderCurrent();
+    }
+  } catch (e) {
+    flash(`保存失败:${e.message},正在重新加载`);
+    await load();
+  }
+}
+async function deleteTaskById(taskId) {
+  if (!confirm("确认删除此任务?此操作不可撤销。")) return;
+  dataset.tasks = dataset.tasks.filter((t) => t.id !== taskId);
+  renderCurrent();
+  closeModal();
+  try {
+    const resp = await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${resp.status}`);
+    }
+    flash("已删除", "info");
+  } catch (e) {
+    flash(`删除失败:${e.message},正在重新加载`);
+    await load();
+  }
+}
+async function createFromModal(payload) {
+  try {
+    const resp = await fetch("/api/create-task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${resp.status}`);
+    }
+    await load();
+    flash("已创建", "info");
+  } catch (e) {
+    flash(`创建失败:${e.message}`);
+  }
+}
+
+/* ============ 弹窗 ============ */
+function populateModalProjectSelect() {
+  const sel = $("m-project");
+  const opts = [];
+  const walk = (parent, depth) => {
+    const children = (childrenMap.get(parent) || []).slice().sort(sortProjects);
+    for (const p of children) {
+      const indent = "  ".repeat(depth) + (depth ? "└ " : "");
+      opts.push(`<option value="${p.id}">${esc(indent + p.title)}</option>`);
+      walk(p.id, depth + 1);
+    }
+  };
+  walk(0, 0);
+  sel.innerHTML = opts.join("");
+}
+function openEditModal(taskId) {
+  const t = getTaskById(taskId);
+  if (!t) return;
+  editingTaskId = taskId;
+  $("modal-title").textContent = "编辑任务";
+  $("modal-delete").hidden = false;
+  populateModalProjectSelect();
+  $("m-title").value = t.title || "";
+  $("m-project").value = String(t.project_id);
+  $("m-due").value = t.due_date ? fmtDate(t.due_date) : "";
+  $("m-priority").value = String(t.priority || 0);
+  $("m-labels").value = (t.labels || []).map((l) => l.title).join(", ");
+  // description 在 Vikunja 是 HTML(markdown 渲染后的),这里简单去标签显示
+  $("m-desc").value = stripHtml(t.description || "");
+  showModal();
+}
+function openNewModal(defaultPid) {
+  editingTaskId = null;
+  $("modal-title").textContent = "新建任务";
+  $("modal-delete").hidden = true;
+  populateModalProjectSelect();
+  $("m-title").value = "";
+  const pids = [...projectMap.keys()];
+  $("m-project").value = String(defaultPid || (pids.length ? pids[0] : ""));
+  $("m-due").value = "";
+  $("m-priority").value = "0";
+  $("m-labels").value = "";
+  $("m-desc").value = "";
+  showModal();
+}
+function showModal() {
+  $("modal-mask").hidden = false;
+  setTimeout(() => $("m-title").focus(), 30);
+}
+function closeModal() {
+  $("modal-mask").hidden = true;
+  editingTaskId = null;
+}
+function stripHtml(s) {
+  // 简易:去 <p>/<br> 之类的标签,保留文本
+  return String(s || "").replace(/<[^>]+>/g, "").replace(/\s+$/g, "");
+}
+async function saveModal() {
+  const title = $("m-title").value.trim();
+  if (!title) { flash("标题不能为空"); $("m-title").focus(); return; }
+  const pid = Number($("m-project").value);
+  if (!pid) { flash("请选择项目"); return; }
+  const due = $("m-due").value || null;
+  const priority = Number($("m-priority").value);
+  const labels = $("m-labels").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const description = $("m-desc").value;
+  closeModal();
+  if (editingTaskId) {
+    await patchTask(editingTaskId, {
+      title,
+      project_id: pid,
+      due_date: due,
+      priority,
+      labels,
+      description,
+    });
+  } else {
+    await createFromModal({
+      title,
+      project_id: pid,
+      due_date: due,
+      priority,
+      labels,
+      description,
+      checklist: [],
+    });
+  }
+}
+
+/* ============ 看板拖拽 ============ */
+function setupBoardDnD() {
+  const board = document.querySelector(".board");
+  if (!board) return;
+  let draggingTid = null;
+  let draggingCard = null;
+  board.addEventListener("dragstart", (e) => {
+    const card = e.target.closest(".board-card");
+    if (!card) return;
+    draggingTid = Number(card.dataset.tid);
+    draggingCard = card;
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox 需要 setData 才能开始拖动
+    try { e.dataTransfer.setData("text/plain", String(draggingTid)); } catch {}
+  });
+  board.addEventListener("dragend", () => {
+    if (draggingCard) draggingCard.classList.remove("dragging");
+    document
+      .querySelectorAll(".board-col.drag-over")
+      .forEach((c) => c.classList.remove("drag-over"));
+    draggingTid = null;
+    draggingCard = null;
+  });
+  board.addEventListener("dragover", (e) => {
+    const col = e.target.closest(".board-col");
+    if (!col) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    document.querySelectorAll(".board-col.drag-over").forEach((c) => {
+      if (c !== col) c.classList.remove("drag-over");
+    });
+    col.classList.add("drag-over");
+  });
+  board.addEventListener("dragleave", (e) => {
+    const col = e.target.closest(".board-col");
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove("drag-over");
+  });
+  board.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const col = e.target.closest(".board-col");
+    if (!col || !draggingTid) return;
+    col.classList.remove("drag-over");
+    const intent = col.dataset.intent || "";
+    const t = getTaskById(draggingTid);
+    if (!t) return;
+    if (intent === "open" && t.done) patchTask(t.id, { done: false });
+    else if (intent === "done" && !t.done) patchTask(t.id, { done: true });
+    else if (intent.startsWith("p:")) {
+      const pid = Number(intent.slice(2));
+      if (pid && t.project_id !== pid) patchTask(t.id, { project_id: pid });
+    }
+  });
+}
+
 /* ============ 事件绑定 ============ */
 window.addEventListener("hashchange", routeFromHash);
 window.addEventListener("DOMContentLoaded", () => {
@@ -577,7 +825,33 @@ window.addEventListener("DOMContentLoaded", () => {
     $("err-box").hidden = true;
     load();
   });
-  // 树形折叠(事件委托)
+
+  // 视图容器内的点击委托:勾选完成 / 新建 / 打开编辑
+  $("view-container").addEventListener("click", (e) => {
+    // 1. 勾选完成
+    const check = e.target.closest('[data-act="toggle-done"]');
+    if (check) {
+      e.stopPropagation();
+      const row = check.closest("[data-tid]");
+      if (!row) return;
+      const tid = Number(row.dataset.tid);
+      const t = getTaskById(tid);
+      if (t) patchTask(tid, { done: !t.done });
+      return;
+    }
+    // 2. 树里点 + 新建
+    const newBtn = e.target.closest('[data-act="new-in-project"]');
+    if (newBtn) {
+      e.stopPropagation();
+      openNewModal(Number(newBtn.dataset.pid));
+      return;
+    }
+    // 3. 点任务行/卡片 → 编辑
+    const item = e.target.closest("[data-tid]");
+    if (item) openEditModal(Number(item.dataset.tid));
+  });
+
+  // 树形折叠(独立委托,不冲突)
   document.addEventListener("click", (e) => {
     const tog = e.target.closest(".tree-toggle");
     if (!tog) return;
@@ -586,5 +860,24 @@ window.addEventListener("DOMContentLoaded", () => {
     const collapsed = branch.classList.toggle("collapsed");
     tog.textContent = collapsed ? "▸" : "▾";
   });
+
+  // FAB + 弹窗
+  $("btn-new-task").addEventListener("click", () => openNewModal());
+  $("modal-close").addEventListener("click", closeModal);
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("modal-save").addEventListener("click", saveModal);
+  $("modal-delete").addEventListener("click", () => {
+    if (editingTaskId) deleteTaskById(editingTaskId);
+  });
+  $("modal-mask").addEventListener("click", (e) => {
+    if (e.target === $("modal-mask")) closeModal();
+  });
+  $("m-title").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveModal(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("modal-mask").hidden) closeModal();
+  });
+
   load();
 });

@@ -219,3 +219,29 @@ async def api_create_task(req: CreateTaskRequest, _: None = Depends(require_api)
         raise HTTPException(status_code=502, detail=str(e))
     task_id = created.get("id")
     return {"ok": True, "task_url": vikunja.task_url(task_id) if task_id else None}
+
+
+@app.post("/api/tasks/{task_id}")
+async def api_update_task(task_id: int, fields: dict, _: None = Depends(require_api)):
+    """部分更新任务(标题/截止/优先级/项目/完成状态等)。
+
+    body 是任意字段字典,原样转给 Vikunja 的 POST /tasks/{id}。
+    返回 Vikunja 更新后的完整 task 对象,供前端刷新本地状态。
+    """
+    if not isinstance(fields, dict) or not fields:
+        raise HTTPException(status_code=400, detail="请求体必须是字段字典")
+    try:
+        updated = await vikunja.update_task(task_id, fields)
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "task": updated}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(task_id: int, _: None = Depends(require_api)):
+    """删除任务。"""
+    try:
+        await vikunja.delete_task(task_id)
+    except VikunjaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
