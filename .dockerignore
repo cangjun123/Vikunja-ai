@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+.claude
+__pycache__
+*.pyc
+docs.json
+chat-export-*.md
+README.md

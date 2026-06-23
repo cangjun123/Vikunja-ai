@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#6366f1">
+  <title>AI 任务助手</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">✦</div>
+      <div class="brand-text">
+        <div class="brand-title">AI 任务助手</div>
+        <div class="brand-sub">for Vikunja</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="model-tag">{{ model }}</span>
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="btn-icon" title="退出" aria-label="退出">⏻</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 输入区 -->
+    <section class="card composer">
+      <textarea id="desc" class="composer-input" placeholder="描述你要新建的任务…&#10;例如:下周三前整理报销材料,放到杂活里" rows="3"></textarea>
+      <div class="composer-foot">
+        <span class="kbd-hint">⌘ / Ctrl + Enter 提交</span>
+        <button id="btn-suggest" class="btn btn-primary">
+          <span class="btn-ico">✨</span><span>生成建议</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 命令历史 -->
+    <section id="history-section" class="history" hidden>
+      <div class="section-label">最近指令 · 点击复用</div>
+      <div id="history-list" class="history-list"></div>
+    </section>
+
+    <!-- 状态提示 -->
+    <div id="status" class="status" hidden></div>
+
+    <!-- 流式输出 -->
+    <section id="stream-section" class="card stream-card" hidden>
+      <div class="stream-head">
+        <span class="spinner"></span>
+        <span id="stream-title">AI 正在思考…</span>
+      </div>
+      <pre id="stream-output" class="stream-output"></pre>
+    </section>
+
+    <!-- 建议结果 -->
+    <section id="draft-section" hidden>
+      <!-- AI 理由 -->
+      <div id="reason-card" class="card reason-card" hidden>
+        <span class="reason-ico">💡</span>
+        <div class="reason-body">
+          <div class="reason-label">AI 的判断</div>
+          <div id="reason" class="reason-text"></div>
+        </div>
+      </div>
+
+      <!-- 任务预览卡 -->
+      <div class="card">
+        <div class="card-head">
+          <h2>任务预览</h2>
+          <span class="hint-edit">所有字段可直接编辑</span>
+        </div>
+
+        <div class="field">
+          <label for="f-title">标题</label>
+          <input type="text" id="f-title" class="input">
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="f-project">项目</label>
+            <select id="f-project" class="input"></select>
+          </div>
+          <div class="field">
+            <label for="f-due">截止日期</label>
+            <input type="date" id="f-due" class="input">
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label for="f-priority">优先级</label>
+            <select id="f-priority" class="input">
+              <option value="0">0 · 无</option>
+              <option value="1">1 · 低</option>
+              <option value="2">2 · 较低</option>
+              <option value="3">3 · 中</option>
+              <option value="4">4 · 较高</option>
+              <option value="5">5 · 紧急</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>标签</label>
+            <div class="tags-wrap input">
+              <div id="tags-display" class="tags"></div>
+              <input type="text" id="f-labels-input" class="tag-input" placeholder="输入后回车">
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="f-desc">描述</label>
+          <textarea id="f-desc" class="input" rows="3"></textarea>
+        </div>
+
+        <div class="field">
+          <label>清单</label>
+          <div id="checklist-display" class="checklist"></div>
+          <input type="text" id="f-checklist-input" class="input checklist-input" placeholder="添加步骤后回车">
+        </div>
+      </div>
+
+      <!-- 参考上下文 -->
+      <div id="context-card" class="card context-card" hidden>
+        <div class="card-head"><h2>参考的已有待办</h2></div>
+        <div id="context-tasks" class="context-list"></div>
+      </div>
+
+      <!-- 操作栏 -->
+      <div class="actions">
+        <button id="btn-cancel" class="btn btn-ghost">取消</button>
+        <button id="btn-edit" class="btn btn-ghost">↺ 重新编辑</button>
+        <button id="btn-create" class="btn btn-primary btn-grow">确认创建</button>
+      </div>
+
+      <!-- 继续优化(多轮对话)-->
+      <div class="card refine-card">
+        <div class="refine-head">
+          <span class="refine-ico">↻</span>
+          <div>
+            <div class="refine-label">继续优化</div>
+            <div class="refine-hint">对当前建议提出修改意见,AI 会基于完整对话迭代</div>
+          </div>
+        </div>
+        <div class="refine-row">
+          <input type="text" id="refine-input" class="input refine-input" placeholder="例如:截止日期推迟一周 / 加一个“联系财务”的步骤 / 标签换成“报销”">
+          <button id="btn-refine" class="btn btn-secondary">
+            <span class="btn-ico">↻</span><span>优化</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
