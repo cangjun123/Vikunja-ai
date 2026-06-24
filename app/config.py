@@ -17,6 +17,7 @@ class Settings:
     llm_api_key: str
     llm_model: str
     max_context_tasks: int
+    app_timezone: str
 
     @classmethod
     def load(cls) -> "Settings":
@@ -29,6 +30,7 @@ class Settings:
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_model=os.getenv("LLM_MODEL", "deepseek-v4-flash"),
             max_context_tasks=int(os.getenv("MAX_CONTEXT_TASKS", "30")),
+            app_timezone=os.getenv("APP_TIMEZONE", "Asia/Shanghai"),
         )
 
     def missing(self) -> list[str]:

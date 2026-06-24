@@ -29,7 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai-task-assistant")
 
-vikunja = VikunjaClient(settings.vikunja_url, settings.vikunja_token)
+vikunja = VikunjaClient(settings.vikunja_url, settings.vikunja_token, settings.app_timezone)
 llm = LLMClient(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
 
 APP_DIR = os.path.dirname(__file__)

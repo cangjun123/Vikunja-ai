@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -20,10 +21,15 @@ class VikunjaError(Exception):
 
 
 class VikunjaClient:
-    def __init__(self, base_url: str, token: str) -> None:
+    def __init__(self, base_url: str, token: str, timezone: str = "Asia/Shanghai") -> None:
         self.base_url = base_url.rstrip("/")
         self.api = self.base_url + API_PREFIX
         self.headers = {"Authorization": f"Bearer {token}"}
+        try:
+            self._tz = ZoneInfo(timezone)
+        except (KeyError, ValueError):
+            logger.warning("无效时区 %s,回退到 UTC", timezone)
+            self._tz = ZoneInfo("UTC")
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = self.api + path
@@ -173,7 +179,7 @@ class VikunjaClient:
             "repeat_mode": req.repeat_mode,
         }
         if req.due_date:
-            body["due_date"] = _to_rfc3339(req.due_date)
+            body["due_date"] = self._to_rfc3339(req.due_date)
 
         created = await self._request(
             "PUT", f"/projects/{req.project_id}/tasks", json=body
@@ -215,7 +221,7 @@ class VikunjaClient:
             titles = fields.pop("labels")
             await self._sync_task_labels(task_id, titles or [])
 
-        body = _normalize_task_body(fields)
+        body = self._normalize_task_body(fields)
         updated = await self._request("POST", f"/tasks/{task_id}", json=body)
         # 如果只改了标签,fields 此刻是空的,POST 仍会返回当前完整任务对象,够用。
         return updated
@@ -259,6 +265,36 @@ class VikunjaClient:
     async def remove_task_label(self, task_id: int, label_id: int) -> None:
         await self._request("DELETE", f"/tasks/{task_id}/labels/{label_id}")
 
+    # ---- 日期工具 ----
+
+    def _to_rfc3339(self, date_str: str) -> str:
+        """把 YYYY-MM-DD 转成指定时区(APP_TIMEZONE)09:00 的 RFC3339 字符串。"""
+        try:
+            dt = datetime.strptime(date_str.strip(), "%Y-%m-%d").replace(hour=9, tzinfo=self._tz)
+        except ValueError:
+            # 已经是别的格式,原样返回
+            return date_str
+        return dt.isoformat()
+
+    def _normalize_task_body(self, fields: dict) -> dict:
+        """把前端传来的字段转成 Vikunja 接受的格式。
+
+        - due_date: "" 或 None → Go 零值(清空);YYYY-MM-DD → RFC3339
+        """
+        body = dict(fields)
+        if "due_date" in body:
+            v = body["due_date"]
+            if not v:
+                body["due_date"] = _GO_ZERO_TIME
+            elif isinstance(v, str) and len(v) == 10:
+                # YYYY-MM-DD → 带时区的 RFC3339
+                body["due_date"] = self._to_rfc3339(v)
+        return body
+
+
+# Vikunja 用 Go 零值时间表示"未设置";清理字段时需要传这个值。
+_GO_ZERO_TIME = "0001-01-01T00:00:00Z"
+
 
 def _build_description(description: str, checklist: list[str]) -> str:
     parts: list[str] = []
@@ -268,35 +304,3 @@ def _build_description(description: str, checklist: list[str]) -> str:
     if items:
         parts.append("\n".join(f"- [ ] {it}" for it in items))
     return "\n\n".join(parts)
-
-
-def _to_rfc3339(date_str: str) -> str:
-    """把 YYYY-MM-DD 转成本地时区 09:00 的 RFC3339 字符串。"""
-    try:
-        dt = datetime.strptime(date_str.strip(), "%Y-%m-%d").replace(hour=9)
-    except ValueError:
-        # 已经是别的格式,原样返回
-        return date_str
-    # 带上本地时区
-    local = dt.astimezone()
-    return local.isoformat()
-
-
-# Vikunja 用 Go 零值时间表示"未设置";清理字段时需要传这个值。
-_GO_ZERO_TIME = "0001-01-01T00:00:00Z"
-
-
-def _normalize_task_body(fields: dict) -> dict:
-    """把前端传来的字段转成 Vikunja 接受的格式。
-
-    - due_date: "" 或 None → Go 零值(清空);YYYY-MM-DD → RFC3339
-    """
-    body = dict(fields)
-    if "due_date" in body:
-        v = body["due_date"]
-        if not v:
-            body["due_date"] = _GO_ZERO_TIME
-        elif isinstance(v, str) and len(v) == 10:
-            # YYYY-MM-DD → 带时区的 RFC3339
-            body["due_date"] = _to_rfc3339(v)
-    return body
