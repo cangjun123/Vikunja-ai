@@ -68,28 +68,22 @@ class VikunjaClient:
         return data or []
 
     async def get_tasks(self, limit: int = 30) -> list[dict]:
-        """获取近期未完成任务,用于给 LLM 提供上下文。"""
+        """获取近期任务(含已完成),用于给 LLM 提供上下文。"""
         params = {
-            "sort": "-created",
-            "filter_by": "done",
-            "filter_value": "false",
-            "filter_comparator": "equals",
+            "sort": "-updated",
             "per_page": str(limit),
         }
         data = await self._request("GET", "/tasks", params=params)
         return data or []
 
     async def get_tasks_slim(self, limit: int = 200) -> list[dict]:
-        """获取未完成任务,只保留前端 task_ref fuzzy match 必需的 6 个字段。
+        """获取近期任务(含已完成),只保留前端 task_ref fuzzy match / query filter 必需的 6 个字段。
 
         tasks_index 通过 SSE 下发给前端,用来本地解析 task_ref / 应用 query filter,
         避免每个 query action 都 round-trip 调 Vikunja。
         """
         params = {
-            "sort": "-created",
-            "filter_by": "done",
-            "filter_value": "false",
-            "filter_comparator": "equals",
+            "sort": "-updated",
             "per_page": str(limit),
         }
         data = await self._request("GET", "/tasks", params=params)
@@ -214,6 +208,8 @@ class VikunjaClient:
         - due_date 空字符串 → Go 零值时间(清空)。
         - labels 为标题字符串列表时,做 add/remove diff 同步
           (Vikunja POST body 里的 labels 字段不会被持久化,跟创建时一样)。
+        - 如果去掉 labels 后 body 为空,不再 POST 空 body(Vikunja 行为未定义),
+          改为 GET 拉回当前状态。
         """
         fields = dict(fields)  # 不修改入参
         # 标签 diff
@@ -222,8 +218,10 @@ class VikunjaClient:
             await self._sync_task_labels(task_id, titles or [])
 
         body = self._normalize_task_body(fields)
-        updated = await self._request("POST", f"/tasks/{task_id}", json=body)
-        # 如果只改了标签,fields 此刻是空的,POST 仍会返回当前完整任务对象,够用。
+        if body:
+            updated = await self._request("POST", f"/tasks/{task_id}", json=body)
+        else:
+            updated = await self._request("GET", f"/tasks/{task_id}")
         return updated
 
     async def _sync_task_labels(self, task_id: int, titles: list[str]) -> None:

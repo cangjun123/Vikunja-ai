@@ -83,7 +83,7 @@ def _data_line(line: str) -> str | None:
 def extract_json(content: str) -> dict:
     """从模型回复中提取 JSON 对象,兼容 markdown 代码块包裹。"""
     text = content.strip()
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1)
     else:
