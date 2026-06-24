@@ -509,6 +509,7 @@ function renderTreeNode(project, tasksByProject, filterProj, depth) {
 }
 
 /* ============ 路由 ============ */
+let pendingScrollTid = null; // deep link #task-{id} 待滚动+高亮的任务 id
 function renderCurrent() {
   if (!dataset) return;
   const view = currentView;
@@ -524,12 +525,30 @@ function renderCurrent() {
 }
 function routeFromHash() {
   let h = (location.hash || "").replace(/^#/, "");
+  const taskMatch = h.match(/^task-(\d+)$/);
+  if (taskMatch) {
+    pendingScrollTid = parseInt(taskMatch[1], 10);
+    h = "list"; // 任务定位强制走 list 视图
+  }
   if (!VIEWS.includes(h)) h = "list";
   if (currentView !== h) {
     currentView = h;
     if (h === "calendar") calCursor = null; // 切到日历时重置为当月
   }
   renderCurrent();
+  // 渲染完成后处理 deep link 滚动 + 高亮
+  if (pendingScrollTid !== null) {
+    const tid = pendingScrollTid;
+    pendingScrollTid = null;
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`[data-tid="${tid}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: "smooth", block: "center" });
+        row.classList.add("task-highlight");
+        setTimeout(() => row.classList.remove("task-highlight"), 2000);
+      }
+    });
+  }
 }
 
 /* ============ 数据加载 ============ */

@@ -84,12 +84,13 @@ function parseSSEBlock(block) {
 }
 
 /* ============ 标签 chip 编辑(per-card 独立 state)============ */
-function renderTags(container, labels) {
+function renderTags(container, labels, knownSet = null) {
   const d = container;
   d.innerHTML = "";
   for (const t of labels) {
     const chip = document.createElement("span");
     chip.className = "tag-chip";
+    if (knownSet && !knownSet.has(t)) chip.classList.add("tag-chip--new");
     const lbl = document.createElement("span");
     lbl.textContent = t;
     const x = document.createElement("button");
@@ -100,23 +101,23 @@ function renderTags(container, labels) {
     x.addEventListener("click", () => {
       const idx = labels.indexOf(t);
       if (idx >= 0) labels.splice(idx, 1);
-      renderTags(container, labels);
+      renderTags(container, labels, knownSet);
     });
     chip.appendChild(lbl);
     chip.appendChild(x);
     d.appendChild(chip);
   }
 }
-function setupTagInput(inp, labels, display) {
+function setupTagInput(inp, labels, display, knownSet = null) {
   inp.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === ",") {
       e.preventDefault();
       const v = inp.value.trim().replace(/,+$/, "");
-      if (v && !labels.includes(v)) { labels.push(v); renderTags(display, labels); }
+      if (v && !labels.includes(v)) { labels.push(v); renderTags(display, labels, knownSet); }
       inp.value = "";
     } else if (e.key === "Backspace" && !inp.value && labels.length) {
       labels.pop();
-      renderTags(display, labels);
+      renderTags(display, labels, knownSet);
     }
   });
 }
@@ -274,8 +275,9 @@ function buildCreateFields(action) {
   const labelsInput = frag.querySelector('[data-k="labels-input"]');
   const checklistDisplay = frag.querySelector('[data-k="checklist-display"]');
   const checklistInput = frag.querySelector('[data-k="checklist-input"]');
-  renderTags(labelsDisplay, labels);
-  setupTagInput(labelsInput, labels, labelsDisplay);
+  const labelsKnownSet = new Set(labelsCache.map((l) => l.title));
+  renderTags(labelsDisplay, labels, labelsKnownSet);
+  setupTagInput(labelsInput, labels, labelsDisplay, labelsKnownSet);
   renderChecklist(checklistDisplay, checklist);
   setupChecklistInput(checklistInput, checklist, checklistDisplay);
 
@@ -425,7 +427,163 @@ function renderCreateBody(body, action, state, summaryEl) {
   };
 }
 
-/* ---- update body:显示 task_ref 候选 + diff + 让用户改选 ---- */
+/* ---- update body:显示 task_ref 候选 + 可编辑字段表单 ---- */
+const FIELD_LABELS = {
+  due_date: "截止日期",
+  priority: "优先级",
+  title: "标题",
+  description: "描述",
+  labels: "标签",
+  project_id: "项目",
+  done: "完成",
+};
+
+/** 把候选 task 格式成 select option 文本(含截止/优先级/状态,便于区分重名) */
+function taskRefOptionText(task, score) {
+  const proj = projectsCache.find((p) => p.id === task.project_id);
+  const projName = proj ? proj.title : "—";
+  const due = task.due_date ? `截止 ${String(task.due_date).slice(0, 10)}` : "无截止";
+  const prio = `P${task.priority ?? 0}`;
+  const doneTag = task.done ? " · 已完成" : "";
+  return `${task.title} · ${projName} · ${due} · ${prio}${doneTag} (匹配 ${score})`;
+}
+
+/** 为单个字段构造可编辑 row;read() 返回 { key: value } */
+function makeFieldEditor(key, value) {
+  const row = document.createElement("div");
+  row.className = "field-edit-row";
+  const lbl = document.createElement("label");
+  lbl.textContent = FIELD_LABELS[key] || key;
+  row.appendChild(lbl);
+
+  let inputEl;
+  const isObj = typeof value === "object" && value !== null && !Array.isArray(value);
+
+  switch (key) {
+    case "due_date":
+      inputEl = document.createElement("input");
+      inputEl.type = "date";
+      inputEl.className = "input";
+      inputEl.value = (value || "").slice(0, 10);
+      break;
+    case "priority": {
+      inputEl = document.createElement("select");
+      inputEl.className = "input";
+      for (const [pv, pl] of [["0","0 无"],["1","1 低"],["2","2 较低"],["3","3 中"],["4","4 较高"],["5","5 紧急"]]) {
+        const o = document.createElement("option");
+        o.value = pv; o.textContent = pl;
+        if (Number(pv) === (value ?? 0)) o.selected = true;
+        inputEl.appendChild(o);
+      }
+      break;
+    }
+    case "title":
+      inputEl = document.createElement("input");
+      inputEl.type = "text";
+      inputEl.className = "input";
+      inputEl.value = value || "";
+      break;
+    case "description":
+      inputEl = document.createElement("textarea");
+      inputEl.className = "input";
+      inputEl.value = value || "";
+      inputEl.rows = 2;
+      break;
+    case "labels":
+      inputEl = document.createElement("input");
+      inputEl.type = "text";
+      inputEl.className = "input";
+      inputEl.value = Array.isArray(value) ? value.join(", ") : (value || "");
+      inputEl.placeholder = "逗号分隔";
+      break;
+    case "project_id": {
+      inputEl = document.createElement("select");
+      inputEl.className = "input";
+      for (const p of projectsCache) {
+        const o = document.createElement("option");
+        o.value = p.id; o.textContent = p.title;
+        if (p.id === value) o.selected = true;
+        inputEl.appendChild(o);
+      }
+      break;
+    }
+    case "done":
+      inputEl = document.createElement("input");
+      inputEl.type = "checkbox";
+      inputEl.checked = !!value;
+      inputEl.style.width = "18px";
+      inputEl.style.height = "18px";
+      break;
+    default:
+      // 复杂类型(dict)用 textarea + JSON,其他用 text
+      if (isObj) {
+        inputEl = document.createElement("textarea");
+        inputEl.className = "input";
+        inputEl.value = JSON.stringify(value, null, 2);
+        inputEl.placeholder = "JSON 格式";
+        inputEl.rows = 2;
+      } else {
+        inputEl = document.createElement("input");
+        inputEl.type = "text";
+        inputEl.className = "input";
+        inputEl.value = String(value ?? "");
+      }
+      break;
+  }
+
+  row.appendChild(inputEl);
+
+  return {
+    row,
+    read: () => {
+      let out;
+      if (key === "due_date") {
+        out = inputEl.value || null;
+      } else if (key === "priority") {
+        out = parseInt(inputEl.value, 10) || 0;
+      } else if (key === "project_id") {
+        out = parseInt(inputEl.value, 10) || null;
+      } else if (key === "labels") {
+        out = inputEl.value.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (key === "done") {
+        out = inputEl.checked;
+      } else if (isObj) {
+        try { out = JSON.parse(inputEl.value); } catch { out = inputEl.value; }
+      } else {
+        out = inputEl.value;
+      }
+      return { [key]: out };
+    },
+  };
+}
+
+/** repeat_after + repeat_mode 共用一个 select,read() 返回两个键 */
+function makeRepeatEditor(after, mode) {
+  const row = document.createElement("div");
+  row.className = "field-edit-row";
+  const lbl = document.createElement("label");
+  lbl.textContent = "重复";
+  row.appendChild(lbl);
+
+  const sel = document.createElement("select");
+  sel.className = "input";
+  for (const [rv, rl] of [["none","不重复"],["daily","每天"],["weekly","每周"],["monthly","每月"],["yearly","每年"]]) {
+    const o = document.createElement("option");
+    o.value = rv; o.textContent = rl;
+    sel.appendChild(o);
+  }
+  sel.value = repeatToSelectValue(after, mode);
+  row.appendChild(sel);
+
+  return {
+    row,
+    read: () => {
+      const r = repeatFromSelect(sel.value);
+      return { repeat_after: r.repeat_after, repeat_mode: r.repeat_mode };
+    },
+  };
+}
+
 function renderUpdateBody(body, action, state, summaryEl) {
   const candidates = resolveTaskRef(action.task_ref, action.project_hint, tasksIndexCache);
   const picker = document.createElement("div");
@@ -449,9 +607,7 @@ function renderUpdateBody(body, action, state, summaryEl) {
     for (const c of candidates) {
       const opt = document.createElement("option");
       opt.value = c.task.id;
-      const proj = projectsCache.find((p) => p.id === c.task.project_id);
-      const projName = proj ? proj.title : "—";
-      opt.textContent = `${c.task.title} · ${projName} (匹配度 ${c.score})`;
+      opt.textContent = taskRefOptionText(c.task, c.score);
       sel.appendChild(opt);
     }
     sel.addEventListener("change", () => {
@@ -471,30 +627,35 @@ function renderUpdateBody(body, action, state, summaryEl) {
   }
   body.appendChild(picker);
 
-  // diff 视图
-  const diff = document.createElement("div");
-  diff.className = "diff-list";
-  const fields = action.fields || {};
-  for (const [k, v] of Object.entries(fields)) {
-    const row = document.createElement("div");
-    row.className = "diff-row";
-    const kEl = document.createElement("span");
-    kEl.className = "diff-k";
-    kEl.textContent = k;
-    const vEl = document.createElement("span");
-    vEl.className = "diff-v";
-    vEl.textContent = formatVal(v);
-    row.appendChild(kEl);
-    row.appendChild(vEl);
-    diff.appendChild(row);
-  }
-  body.appendChild(diff);
+  // 可编辑字段表单(替代旧的只读 diff-list)
+  const fields = { ...(action.fields || {}) };
+  const editors = [];
+  const wrap = document.createElement("div");
+  wrap.className = "field-edit-list";
 
-  state.collect = () => ({
-    type: "update",
-    task_id: selectedTaskId,
-    fields: { ...fields },
-  });
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === "repeat_mode") continue; // 与 repeat_after 共用 select
+    if (k === "repeat_after") {
+      const ed = makeRepeatEditor(fields.repeat_after ?? 0, fields.repeat_mode ?? 0);
+      editors.push(ed);
+      wrap.appendChild(ed.row);
+      continue;
+    }
+    const ed = makeFieldEditor(k, v);
+    editors.push(ed);
+    wrap.appendChild(ed.row);
+  }
+  body.appendChild(wrap);
+
+  state.collect = () => {
+    const outFields = {};
+    for (const ed of editors) Object.assign(outFields, ed.read());
+    return {
+      type: "update",
+      task_id: selectedTaskId,
+      fields: outFields,
+    };
+  };
 }
 
 /* ---- complete body ---- */
@@ -521,9 +682,7 @@ function renderCompleteBody(body, action, state, summaryEl) {
     for (const c of candidates) {
       const opt = document.createElement("option");
       opt.value = c.task.id;
-      const proj = projectsCache.find((p) => p.id === c.task.project_id);
-      const projName = proj ? proj.title : "—";
-      opt.textContent = `${c.task.title} · ${projName} (匹配度 ${c.score})`;
+      opt.textContent = taskRefOptionText(c.task, c.score);
       sel.appendChild(opt);
     }
     sel.addEventListener("change", () => {
@@ -570,7 +729,7 @@ function renderQueryBody(body, action, state) {
       const proj = projectsCache.find((p) => p.id === t.project_id);
       const row = document.createElement("a");
       row.className = "ctx-item";
-      row.href = `/tasks#list`;
+      row.href = `/tasks#task-${t.id}`;
       const b = document.createElement("span");
       b.className = "ctx-bullet";
       const ti = document.createElement("span");
@@ -838,7 +997,7 @@ function updateExecuteCount() {
   const cards = document.querySelectorAll("#actions-list .action-card");
   let active = 0;
   cards.forEach((c) => {
-    if (!c._state.cancelled && c._state.status !== "warn") active++;
+    if (!c._state.cancelled && c._state.status !== "warn" && c._state.status !== "ok") active++;
   });
   $("execute-label").textContent = active > 0 ? `全部执行(${active} 条)` : "全部执行";
 }
@@ -931,32 +1090,56 @@ async function runSuggest(isFirst) {
 }
 
 /* ============ 全部执行 ============ */
+/**
+ * fetch 封装:仅对网络错误(TypeError)或 5xx 重试,4xx/401 不重试。
+ * 注意:不应用于 /api/suggest(SSE 流,重试会重启整个生成)。
+ */
+async function fetchWithRetry(url, opts, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(url, opts);
+      if (resp.status >= 500 && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      return resp;
+    } catch (e) {
+      if (e instanceof TypeError && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 async function executeAll() {
   if (!currentPlan || !currentPlan.actions.length) return;
-  // 收集所有可执行的动作(排除被取消 / warn 状态)
+  // 收集所有可执行的动作(排除被取消 / warn 状态 / 已成功 ok)
   const cards = document.querySelectorAll("#actions-list .action-card");
   const toExecute = [];
   cards.forEach((c, i) => {
     if (c._state.cancelled) return;
     if (c._state.status === "warn") return;
+    if (c._state.status === "ok") return; // 已成功,不重跑
     const payload = c._state.collect ? c._state.collect() : null;
     if (!payload) return;
     toExecute.push({ index: i, card: c, payload });
   });
 
   if (toExecute.length === 0) {
-    setStatus("没有可执行的动作(可能全部被取消或匹配失败)", "error");
+    setStatus("没有可执行的动作(可能全部被取消、匹配失败或已成功)", "error");
     return;
   }
 
   $("btn-execute").disabled = true;
   setStatus("正在执行…", "info");
   try {
-    const resp = await fetch("/api/execute-actions", {
+    const resp = await fetchWithRetry("/api/execute-actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actions: toExecute.map((x) => x.payload) }),
-    });
+    }, 1);
     if (resp.status === 401) { window.location.href = "/login"; return; }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(fmtApiError(resp.status, data));
@@ -969,10 +1152,13 @@ async function executeAll() {
       const card = item.card;
       const badge = card.querySelector(".action-badge");
       if (r && r.ok) {
+        card._state.status = "ok"; // 标记已成功,防止重复执行
         card.classList.add("action-card--ok");
         card.classList.add("action-card--collapsed");
         badge.classList.add("action-badge--ok");
         badge.textContent = "✓ " + (TYPE_LABEL[item.payload.type] || item.payload.type);
+        // 已成功的卡片不能再取消(已写入 Vikunja)
+        card.querySelector(".action-cancel")?.classList.add("is-hidden");
         okCount++;
       } else {
         card.classList.add("action-card--error");
@@ -1000,6 +1186,7 @@ async function executeAll() {
     } else {
       setStatus(`执行完成:成功 ${okCount} 条,失败 ${failCount} 条。失败的可展开查看错误,修正后再试。`, "error");
     }
+    updateExecuteCount();
   } catch (e) {
     setStatus("执行失败:" + e.message, "error");
   } finally {
