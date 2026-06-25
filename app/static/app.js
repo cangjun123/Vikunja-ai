@@ -384,6 +384,7 @@ function renderActionCard(action, index) {
     state.cancelled = cancelChk.checked;
     card.classList.toggle("action-card--cancelled", state.cancelled);
     updateExecuteCount();
+    savePlanSnapshot();
   });
 
   // 按 type 分派具体 body 渲染
@@ -991,6 +992,7 @@ function renderActionPlan(data) {
   $("actions-section").hidden = false;
   updateExecuteCount();
   $("actions-section").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!_restoring) savePlanSnapshot();
 }
 
 function updateExecuteCount() {
@@ -1000,6 +1002,175 @@ function updateExecuteCount() {
     if (!c._state.cancelled && c._state.status !== "warn" && c._state.status !== "ok") active++;
   });
   $("execute-label").textContent = active > 0 ? `全部执行(${active} 条)` : "全部执行";
+}
+
+/* ============ 计划快照(跨页面持久化)============
+ * AI 建任务页与任务看板页是两个独立页面,顶部导航切换 = 浏览器整页刷新,
+ * 内存里的 currentPlan / 卡片状态会全部丢失。这里把当前计划 + 每张卡的
+ * 状态/编辑值序列化进 sessionStorage,回到本页时自动重建,让执行结果与
+ * 字段编辑在切页后仍得以保留。sessionStorage 随标签关闭自动清理。
+ */
+const PLAN_SNAPSHOT_KEY = "vka_plan_snapshot";
+let _restoring = false;
+
+/** 把已执行(ok/error)的视觉状态打到卡片上;executeAll 与恢复共用。 */
+function markCardExecuted(card, type, ok, errorMsg) {
+  const badge = card.querySelector(".action-badge");
+  const label = TYPE_LABEL[type] || type;
+  if (ok) {
+    card._state.status = "ok";
+    card.classList.add("action-card--ok", "action-card--collapsed");
+    badge.classList.add("action-badge--ok");
+    badge.textContent = "✓ " + label;
+    card.querySelector(".action-cancel")?.classList.add("is-hidden");
+  } else {
+    card._state.status = "error"; // 失败仍可重试(未被 executeAll 过滤排除)
+    card.classList.add("action-card--error");
+    badge.classList.add("action-badge--error");
+    badge.textContent = "✗ " + label;
+    if (errorMsg) {
+      const body = card.querySelector(".action-body");
+      const old = body && body.querySelector(".action-error-msg");
+      if (old) old.remove(); // 重试时去掉旧错误条,避免叠加
+      if (body) {
+        const errEl = document.createElement("div");
+        errEl.className = "taskref-warn action-error-msg";
+        errEl.textContent = "失败:" + errorMsg;
+        body.appendChild(errEl);
+      }
+    }
+  }
+}
+
+/** 把保存的 payload(用户编辑后的值)写回 action,使重新渲染时表单初始即为编辑值。 */
+function mergePayloadIntoAction(action, payload) {
+  if (!payload) return;
+  switch (payload.type) {
+    case "create":
+    case "create_project":
+      Object.assign(action, payload);
+      break;
+    case "update":
+    case "update_project":
+      action.fields = payload.fields;
+      break;
+    // complete / query 无表单值需回填
+  }
+}
+
+/** 把单卡快照(状态/取消/目标选择)回放到已渲染的卡片上。 */
+function applyCardSnapshot(card, snap) {
+  if (!snap) return;
+  const s = card._state;
+  if (snap.cancelled) {
+    s.cancelled = true;
+    card.classList.add("action-card--cancelled");
+    const chk = card.querySelector(".action-cancel input[type='checkbox']");
+    if (chk) chk.checked = true;
+  }
+  const ptype = snap.payload && snap.payload.type;
+  if (snap.status === "ok") {
+    markCardExecuted(card, ptype, true);
+  } else if (snap.status === "error") {
+    markCardExecuted(card, ptype, false, snap.errorMsg);
+  } else if (snap.status === "warn") {
+    s.status = "warn";
+  }
+  // 回放 update/complete/update_project 的目标选择
+  const selVal =
+    snap.payload && (snap.payload.task_id || snap.payload.project_id);
+  if (
+    selVal &&
+    (ptype === "update" || ptype === "complete" || ptype === "update_project")
+  ) {
+    const sel = card.querySelector(".taskref-select");
+    if (sel) sel.value = String(selVal);
+  }
+}
+
+/** 把当前计划 + 所有卡片状态(含 collect() 出的编辑值)写进 sessionStorage。 */
+function savePlanSnapshot() {
+  if (!currentPlan || !currentPlan.actions || !currentPlan.actions.length) return;
+  const cards = document.querySelectorAll("#actions-list .action-card");
+  const snaps = [];
+  cards.forEach((c) => {
+    const s = c._state || {};
+    let errorMsg = null;
+    if (s.status === "error") {
+      const e = c.querySelector(".action-body .action-error-msg");
+      if (e) errorMsg = e.textContent.replace(/^失败:/, "").trim();
+    }
+    snaps.push({
+      status: s.status || "pending",
+      cancelled: !!s.cancelled,
+      payload: s.collect ? s.collect() : null,
+      errorMsg,
+    });
+  });
+  try {
+    sessionStorage.setItem(
+      PLAN_SNAPSHOT_KEY,
+      JSON.stringify({
+        plan: currentPlan,
+        conversation,
+        projectsCache,
+        labelsCache,
+        tasksIndexCache,
+        cards: snaps,
+      })
+    );
+  } catch {}
+}
+
+function clearPlanSnapshot() {
+  try {
+    sessionStorage.removeItem(PLAN_SNAPSHOT_KEY);
+  } catch {}
+}
+
+/** 页面加载时若有快照,重建计划并回放每张卡的状态。返回是否恢复成功。 */
+function restorePlanSnapshot() {
+  let raw;
+  try {
+    raw = sessionStorage.getItem(PLAN_SNAPSHOT_KEY);
+  } catch {
+    return false;
+  }
+  if (!raw) return false;
+  let snap;
+  try {
+    snap = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!snap || !snap.plan || !Array.isArray(snap.plan.actions) || !snap.plan.actions.length) {
+    return false;
+  }
+  const snaps = Array.isArray(snap.cards) ? snap.cards : [];
+  // 先把编辑值写回 action,再渲染,表单初始即显示编辑后的值
+  snap.plan.actions.forEach((a, i) => {
+    if (snaps[i] && snaps[i].payload) mergePayloadIntoAction(a, snaps[i].payload);
+  });
+  _restoring = true;
+  try {
+    renderActionPlan({
+      reason: snap.plan.reason || "",
+      summary: snap.plan.summary || "",
+      actions: snap.plan.actions,
+      projects: snap.projectsCache || [],
+      labels: snap.labelsCache || [],
+      tasks_index: snap.tasksIndexCache || [],
+    });
+    conversation = Array.isArray(snap.conversation) ? snap.conversation : [];
+    const cards = document.querySelectorAll("#actions-list .action-card");
+    cards.forEach((c, i) => applyCardSnapshot(c, snaps[i]));
+    updateExecuteCount();
+  } finally {
+    _restoring = false;
+  }
+  savePlanSnapshot(); // 用回放后的真实状态覆盖(渲染期间跳过了保存)
+  setStatus("已恢复上次的计划(切换页面期间已保留)", "info");
+  return true;
 }
 
 /* ============ 多轮:首次生成 / 继续优化 ============ */
@@ -1150,24 +1321,11 @@ async function executeAll() {
     for (const item of toExecute) {
       const r = results.find((x) => x.index === item.index);
       const card = item.card;
-      const badge = card.querySelector(".action-badge");
       if (r && r.ok) {
-        card._state.status = "ok"; // 标记已成功,防止重复执行
-        card.classList.add("action-card--ok");
-        card.classList.add("action-card--collapsed");
-        badge.classList.add("action-badge--ok");
-        badge.textContent = "✓ " + (TYPE_LABEL[item.payload.type] || item.payload.type);
-        // 已成功的卡片不能再取消(已写入 Vikunja)
-        card.querySelector(".action-cancel")?.classList.add("is-hidden");
+        markCardExecuted(card, item.payload.type, true);
         okCount++;
       } else {
-        card.classList.add("action-card--error");
-        badge.classList.add("action-badge--error");
-        badge.textContent = "✗ " + (TYPE_LABEL[item.payload.type] || item.payload.type);
-        const errEl = document.createElement("div");
-        errEl.className = "taskref-warn";
-        errEl.textContent = "失败:" + ((r && r.error) || "未知错误");
-        card.querySelector(".action-body").appendChild(errEl);
+        markCardExecuted(card, item.payload.type, false, (r && r.error) || "未知错误");
         failCount++;
       }
     }
@@ -1187,6 +1345,7 @@ async function executeAll() {
       setStatus(`执行完成:成功 ${okCount} 条,失败 ${failCount} 条。失败的可展开查看错误,修正后再试。`, "error");
     }
     updateExecuteCount();
+    savePlanSnapshot(); // 持久化执行结果,切页后仍可见
   } catch (e) {
     setStatus("执行失败:" + e.message, "error");
   } finally {
@@ -1200,6 +1359,7 @@ function cancelAll() {
   currentPlan = null;
   $("actions-section").hidden = true;
   setStatus("", "");
+  clearPlanSnapshot();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1214,4 +1374,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $("refine-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") refine();
   });
+
+  // 表单编辑时防抖保存快照(捕获字段修改,切页不丢)
+  let _saveTimer = null;
+  const scheduleSave = () => {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(savePlanSnapshot, 400);
+  };
+  $("actions-list").addEventListener("input", scheduleSave);
+  $("actions-list").addEventListener("change", scheduleSave);
+
+  // 恢复上次未完成的计划(跨页面持久化)
+  restorePlanSnapshot();
 });
