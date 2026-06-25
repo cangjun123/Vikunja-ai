@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .claude/
+# AI 请求日志(完整输入/输出,仅本地排查用)
+/logs/
 # API debug samples
 /_n.json
 /_p.json

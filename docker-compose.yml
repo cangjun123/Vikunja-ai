@@ -6,4 +6,7 @@ services:
       - "18080:8000"
     env_file:
       - .env
+    volumes:
+      # AI 请求日志落到宿主机,便于直接查看排查
+      - ./logs:/app/logs
     restart: unless-stopped

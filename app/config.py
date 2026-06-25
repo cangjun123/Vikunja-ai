@@ -18,6 +18,7 @@ class Settings:
     llm_model: str
     max_context_tasks: int
     app_timezone: str
+    log_file: str
 
     @classmethod
     def load(cls) -> "Settings":
@@ -31,6 +32,7 @@ class Settings:
             llm_model=os.getenv("LLM_MODEL", "deepseek-v4-flash"),
             max_context_tasks=int(os.getenv("MAX_CONTEXT_TASKS", "30")),
             app_timezone=os.getenv("APP_TIMEZONE", "Asia/Shanghai"),
+            log_file=os.getenv("LOG_FILE", "logs/ai_requests.log"),
         )
 
     def missing(self) -> list[str]:

@@ -20,6 +20,7 @@ from .auth import is_logged_in, require_api, verify_password
 from .config import settings
 from .llm_client import LLMClient, LLMError, parse_actions
 from .prompt import SYSTEM_PROMPT, build_context
+from .request_log import log_request
 from .schemas import CreateTaskRequest, ExecuteActionsRequest, SuggestRequest
 from .vikunja_client import VikunjaClient, VikunjaError
 
@@ -180,16 +181,29 @@ async def api_suggest(req: SuggestRequest, _: None = Depends(require_api)):
                 collected.append(delta)
                 yield _sse("delta", {"text": delta})
         except LLMError as e:
+            log_request(
+                settings.log_file, messages, "".join(collected) or None,
+                "stream_failed", str(e), settings.app_timezone,
+            )
             yield _sse("error", {"detail": str(e)})
             return
 
         # 3. 解析完整输出为动作计划
+        output_text = "".join(collected)
         try:
-            plan = parse_actions("".join(collected))
+            plan = parse_actions(output_text)
         except LLMError as e:
+            log_request(
+                settings.log_file, messages, output_text,
+                "parse_failed", str(e), settings.app_timezone,
+            )
             yield _sse("error", {"detail": str(e)})
             return
 
+        log_request(
+            settings.log_file, messages, output_text,
+            "ok", None, settings.app_timezone,
+        )
         yield _sse(
             "done",
             {
