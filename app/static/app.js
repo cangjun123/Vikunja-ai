@@ -49,6 +49,24 @@ function renderHistory() {
     });
     list.appendChild(el);
   }
+  layoutHistory();
+}
+
+/**
+ * 最近指令的位置随有无 AI 回答动态调整:
+ *   - 动作计划可见(有 AI 回答)→ 挪到动作计划之后(页面最底)
+ *   - 否则(刚进页 / 生成中 / 已取消)→ 紧贴输入区下方
+ * 避免它夹在用户输入和 AI 回答中间造成干扰。
+ */
+function layoutHistory() {
+  const history = $("history-section");
+  const composer = document.querySelector(".composer");
+  const actions = $("actions-section");
+  if (!history || !composer || !actions || history.hidden) return;
+  const wantAfter = !actions.hidden ? actions : composer;
+  if (history.previousElementSibling !== wantAfter) {
+    wantAfter.parentNode.insertBefore(history, wantAfter.nextSibling);
+  }
 }
 
 /* ============ 错误格式化 ============ */
@@ -991,6 +1009,7 @@ function renderActionPlan(data) {
 
   $("actions-section").hidden = false;
   updateExecuteCount();
+  layoutHistory();
   $("actions-section").scrollIntoView({ behavior: "smooth", block: "start" });
   if (!_restoring) savePlanSnapshot();
 }
@@ -1194,6 +1213,7 @@ async function runSuggest(isFirst) {
   $("btn-suggest").disabled = true;
   $("btn-refine").disabled = true;
   $("actions-section").hidden = true;
+  layoutHistory();
   $("stream-output").textContent = "";
   $("stream-section").hidden = false;
   setStatus(isFirst ? "正在生成…" : "正在根据你的意见优化…", "info");
@@ -1358,6 +1378,7 @@ function cancelAll() {
   conversation = [];
   currentPlan = null;
   $("actions-section").hidden = true;
+  layoutHistory();
   setStatus("", "");
   clearPlanSnapshot();
 }
