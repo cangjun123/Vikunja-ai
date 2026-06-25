@@ -8,6 +8,7 @@ let currentPlan = null; // 最近一次的动作计划(供 execute / refine 用)
 let projectsCache = []; // [{id,title,identifier,hex_color}]
 let labelsCache = []; // [{id,title}]
 let tasksIndexCache = []; // slim 任务列表(本地 fuzzy match / query filter 用)
+let isGenerating = false; // 正在流式生成中(用于离开页面拦截)
 
 const TYPE_LABEL = {
   create: "新建任务",
@@ -1213,6 +1214,7 @@ async function runSuggest(isFirst) {
   $("btn-suggest").disabled = true;
   $("btn-refine").disabled = true;
   $("actions-section").hidden = true;
+  isGenerating = true;
   layoutHistory();
   $("stream-output").textContent = "";
   $("stream-section").hidden = false;
@@ -1275,6 +1277,7 @@ async function runSuggest(isFirst) {
     setStatus("生成失败:" + e.message, "error");
     $("stream-section").hidden = true;
   } finally {
+    isGenerating = false;
     $("btn-suggest").disabled = false;
     $("btn-refine").disabled = false;
   }
@@ -1404,6 +1407,13 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("actions-list").addEventListener("input", scheduleSave);
   $("actions-list").addEventListener("change", scheduleSave);
+
+  // 生成过程中离开页面会切断 SSE 流导致丢失,弹原生确认让用户决定是否留下
+  window.addEventListener("beforeunload", (e) => {
+    if (!isGenerating) return;
+    e.preventDefault();
+    e.returnValue = ""; // 触发浏览器原生「确认离开?」对话框
+  });
 
   // 恢复上次未完成的计划(跨页面持久化)
   restorePlanSnapshot();
