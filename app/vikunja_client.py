@@ -95,6 +95,11 @@ class VikunjaClient:
                 "due_date": (t.get("due_date") or "")[:10] or None,
                 "priority": t.get("priority", 1),
                 "done": bool(t.get("done", False)),
+                "labels": [
+                    l.get("title", "")
+                    for l in (t.get("labels") or [])
+                    if isinstance(l, dict) and l.get("title")
+                ],
             }
             for t in (data or [])
         ]

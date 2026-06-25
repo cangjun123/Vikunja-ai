@@ -913,6 +913,11 @@ function applyFilter(filter, tasksIndex) {
     if (f.priority_min && (t.priority ?? 0) < f.priority_min) return false;
     if (f.q && !(t.title || "").includes(f.q)) return false;
     if (f.done !== undefined && f.done !== null && !!t.done !== !!f.done) return false;
+    // labels:任务标签包含其中任一即命中(语义与 prompt 文档一致)
+    if (Array.isArray(f.labels) && f.labels.length) {
+      const tl = t.labels || [];
+      if (!f.labels.some((l) => tl.includes(l))) return false;
+    }
     return true;
   });
 }
@@ -929,6 +934,7 @@ function describeFilter(f) {
   if (f.priority_min) parts.push(`优先级≥${f.priority_min}`);
   if (f.q) parts.push(`含"${f.q}"`);
   if (f.done !== undefined && f.done !== null) parts.push(f.done ? "已完成" : "未完成");
+  if (Array.isArray(f.labels) && f.labels.length) parts.push(`标签=${f.labels.join("/")}`);
   return parts.join(" · ") || "全部未完成任务";
 }
 
